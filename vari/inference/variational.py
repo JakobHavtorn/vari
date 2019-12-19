@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from vari.utilities import log_sum_exp, enumerate_discrete
 from vari.inference.distributions import log_standard_categorical
 
+
 class ImportanceWeightedSampler(object):
     """
     Importance weighted sampler [Burda 2015] to

@@ -49,13 +49,13 @@ def onehot(k):
     return encode
 
 
-def log_sum_exp(tensor, dim=-1, sum_op=torch.sum):
+def log_sum_exp(tensor, axis=-1, sum_op=torch.sum):
     """
     Uses the LogSumExp (LSE) as an approximation for the sum in a log-domain.
     :param tensor: Tensor to compute LSE over
-    :param dim: dimension to perform operation over
+    :param axis: dimension to perform operation over
     :param sum_op: reductive operation to be applied, e.g. torch.sum or torch.mean
     :return: LSE
     """
-    maximum, _ = torch.max(tensor, dim=dim, keepdim=True)
-    return torch.log(sum_op(torch.exp(tensor - maximum), dim=dim, keepdim=True) + 1e-8) + maximum
+    maximum, _ = torch.max(tensor, axis=axis, keepdim=True)
+    return torch.log(sum_op(torch.exp(tensor - maximum), axis=axis, keepdim=True) + 1e-8) + maximum

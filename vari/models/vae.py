@@ -12,6 +12,32 @@ from vari.inference import log_gaussian, log_standard_gaussian
 #      and make the LadderVariationalAutoEncoder use these instead
 
 
+def kld_gaussian_gaussian(z, q_param, p_param=None):
+    """
+    Computes the KL-divergence of
+    some element z.
+    KL(q||p) = ∫ q(z) log [ q(z) / p(z) ]
+             = E[log q(z) - log p(z)]
+    :param z: sample from q-distribuion
+    :param q_param: (mu, log_var) of the q-distribution
+    :param p_param: (mu, log_var) of the p-distribution
+    :return: KL(q||p)
+    """
+    (mu, log_var) = q_param
+
+    qz = log_gaussian(z, mu, log_var)
+
+    if p_param is None:
+        pz = log_standard_gaussian(z)
+    else:
+        (mu, log_var) = p_param
+        pz = log_gaussian(z, mu, log_var)
+
+    kl = qz - pz
+
+    return kl
+
+
 class Perceptron(nn.Module):
     def __init__(self, dims, activation_fn=F.relu, output_activation=None):
         super(Perceptron, self).__init__()
@@ -43,15 +69,27 @@ class Encoder(nn.Module):
         given by the number of neurons on the form
         [input_dim, [hidden_dims], latent_dim].
     """
-    def __init__(self, dims, sample_layer=GaussianSample):
+    def __init__(self, x_dim, z_dim, h_dims, sample_layer=GaussianSample):
         super(Encoder, self).__init__()
+        
+        self.x_dim = x_dim
+        self.z_dim = z_dim
+        self.h_dims = h_dims
 
-        [x_dim, h_dim, z_dim] = dims
-        neurons = [x_dim, *h_dim]
-        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+        dims = [x_dim, *h_dims]
+        linear_layers = [nn.Linear(dims[i-1], dims[i]) for i in range(1, len(dims))]
 
         self.hidden = nn.ModuleList(linear_layers)
-        self.sample = sample_layer(h_dim[-1], z_dim)
+        self.sample = sample_layer(h_dims[-1], z_dim)
+        self.initialize()
+        
+    def initialize(self):
+        gain = torch.nn.init.calculate_gain('tanh', param=None)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal_(m.weight, gain=gain)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
     def forward(self, x):
         for layer in self.hidden:
@@ -69,25 +107,33 @@ class Decoder(nn.Module):
         given by the number of neurons on the form
         [latent_dim, [hidden_dims], input_dim].
     """
-    def __init__(self, dims, sample_layer=GaussianSample):
+    def __init__(self, x_dim, z_dim, h_dims, activation=nn.Tanh, sample_layer=GaussianSample):
         super(Decoder, self).__init__()
 
-        [z_dim, h_dim, x_dim] = dims
+        self.x_dim = x_dim
+        self.z_dim = z_dim
+        self.h_dims = h_dims
 
-        neurons = [z_dim, *h_dim]
-        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
+        dims = [z_dim, *h_dims]
+        linear_layers = [nn.Linear(dims[i-1], dims[i]) for i in range(1, len(dims))]
+        #activations = [activation() for i in range(1, len(dims))]
+
         self.hidden = nn.ModuleList(linear_layers)
-
-        self.sample = sample_layer(h_dim[-1], x_dim)
-        #self.reconstruction = nn.Linear(h_dim[-1], x_dim)
-
-        #self.output_activation = nn.Sigmoid()
+        self.sample = sample_layer(h_dims[-1], x_dim)
+        self.initialize()
+        
+    def initialize(self):
+        gain = torch.nn.init.calculate_gain('tanh', param=None)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal_(m.weight, gain=gain)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
     def forward(self, x):
         for layer in self.hidden:
             x = F.tanh(layer(x))
         return self.sample(x)
-        #return self.output_activation(self.reconstruction(x))
 
 
 class VariationalAutoencoder(nn.Module):
@@ -98,50 +144,16 @@ class VariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, dims):
+    def __init__(self, x_dim, z_dim, h_dims):
         super(VariationalAutoencoder, self).__init__()
 
-        [x_dim, z_dim, h_dim] = dims
+        self.x_dim = x_dim
         self.z_dim = z_dim
-        self.flow = None
+        self.h_dims = h_dims
 
-        self.encoder = Encoder([x_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = Encoder(x_dim=x_dim, z_dim=z_dim, h_dims=h_dims)
+        self.decoder = Decoder(x_dim=z_dim, z_dim=x_dim, h_dims=list(reversed(h_dims)))
         self.kl_divergence = 0
-
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.xavier_normal_(m.weight)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-    def _kld(self, z, q_param, p_param=None):
-        """
-        Computes the KL-divergence of
-        some element z.
-        KL(q||p) = -∫ q(z) log [ p(z) / q(z) ]
-                 = -E[log p(z) - log q(z)]
-        :param z: sample from q-distribuion
-        :param q_param: (mu, log_var) of the q-distribution
-        :param p_param: (mu, log_var) of the p-distribution
-        :return: KL(q||p)
-        """
-        (mu, log_var) = q_param
-
-        qz = log_gaussian(z, mu, log_var)
-
-        if p_param is None:
-            pz = log_standard_gaussian(z)
-        else:
-            (mu, log_var) = p_param
-            pz = log_gaussian(z, mu, log_var)
-
-        kl = pz - qz  # NOTE The sign here ensures kl >= 0
-
-        return kl
-
-    def add_flow(self, flow):
-        self.flow = flow
 
     def forward(self, x, y=None):
         """
@@ -151,11 +163,16 @@ class VariationalAutoencoder(nn.Module):
         :param x: input data
         :return: reconstructed input
         """
-        z, z_mu, z_log_var = self.encoder(x)
+        # Latent inference q(z|a,x)
+        q_z, q_z_mu, q_z_log_var = self.encoder(x)
 
-        self.kl_divergence = self._kld(z, (z_mu, z_log_var))
+        # Generative p(x|z)
+        p_x, p_x_mu, p_x_log_var = self.decoder(z)
 
-        return self.decoder(z)
+        # KL Divergence
+        self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
+
+        return p_x, p_x_mu, p_x_log_var
 
     def sample(self, z):
         """
@@ -166,6 +183,56 @@ class VariationalAutoencoder(nn.Module):
         """
         return self.decoder(z)
 
+
+class AuxilliaryVariationalAutoencoder(nn.Module):
+    def __init__(self, x_dim, z_dim, a_dim, h_dims):
+        """
+        Auxiliary Deep Generative Models [Maaløe 2016]
+        code replication. The ADGM introduces an additional
+        latent variable 'a', which enables the model to fit
+        more complex variational distributions.
+
+        :param dims: dimensions of x, y, z, a and hidden layers.
+        """
+        super(AuxilliaryVariationalAutoencoder, self).__init__()
+
+        self.x_dim = x_dim
+        self.z_dim = z_dim
+        self.a_dim = a_dim
+        self.h_dims = h_dims
+
+        self.aux_encoder = Encoder(x_dim=x_dim, z_dim=a_dim, h_dims=h_dims)
+        self.aux_decoder = Encoder(x_dim=x_dim + z_dim, z_dim=a_dim, h_dims=list(reversed(h_dims)))
+
+        self.encoder = Encoder(x_dim=a_dim + x_dim, z_dim=z_dim, h_dims=h_dims)
+        self.decoder = Decoder(x_dim=z_dim, z_dim=x_dim, h_dims=list(reversed(h_dims)))
+
+    def forward(self, x):
+        """
+        Forward through the model
+        :param x: features
+        :param y: labels
+        :return: reconstruction
+        """
+        # Auxiliary inference q(a|x)
+        q_a, q_a_mu, q_a_log_var = self.aux_encoder(x)
+
+        # Latent inference q(z|a,x)
+        q_z, q_z_mu, q_z_log_var = self.encoder(torch.cat([x, q_a], dim=1))
+
+        # Generative p(x|z)
+        p_x, p_x_mu, p_x_log_var = self.decoder(q_z)
+
+        # Generative p(a|q_z,x)
+        p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
+
+        a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_log_var), (p_a_mu, p_a_log_var))
+        z_kl = kld_gaussian_gaussian(z, (z_mu, z_log_var))
+
+        self.kl_divergence = a_kl + z_kl
+
+        return p_x, p_x_mu, p_x_log_var
+    
 
 class GumbelAutoencoder(nn.Module):
     def __init__(self, dims, n_samples=100):
@@ -197,7 +264,7 @@ class GumbelAutoencoder(nn.Module):
         x = self.encoder(x)
 
         sample, qz = self.sampler(x, tau)
-        self.kl_divergence = self._kld(qz)
+        self.kl_divergence = kld_gaussian_gaussian(qz)
 
         x_mu = self.decoder(sample)
 
@@ -311,12 +378,12 @@ class LadderVariationalAutoencoder(VariationalAutoencoder):
             # use prior for KL.
             l_mu, l_log_var = latents[i]
             if i == 0:
-                self.kl_divergence += self._kld(z, (l_mu, l_log_var))
+                self.kl_divergence += kld_gaussian_gaussian(z, (l_mu, l_log_var))
 
             # Perform downword merge of information.
             else:
                 z, kl = decoder(z, l_mu, l_log_var)
-                self.kl_divergence += self._kld(*kl)
+                self.kl_divergence += kld_gaussian_gaussian(*kl)
 
         x_mu = self.reconstruction(z)
         return x_mu

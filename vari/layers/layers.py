@@ -42,7 +42,8 @@ class GaussianSample(Stochastic):
 
     def forward(self, x):
         mu = self.mu(x)
-        log_var = F.softplus(self.log_var(x))
+        #log_var = F.softplus(self.log_var(x))
+        log_var = self.log_var(x)
 
         return self.reparametrize(mu, log_var), mu, log_var
 
@@ -62,8 +63,9 @@ class GaussianMerge(GaussianSample):
         # Calculate precision of each distribution
         # (inverse variance)
         mu2 = self.mu(z)
-        log_var2 = F.softplus(self.log_var(z))
-        precision1, precision2 = (1/torch.exp(log_var1), 1/torch.exp(log_var2))
+        #log_var2 = F.softplus(self.log_var(z))
+        log_var2 = self.log_var(z)
+        precision1, precision2 = (1 / torch.exp(log_var1), 1 / torch.exp(log_var2))
 
         # Merge distributions into a single new
         # distribution
