@@ -13,7 +13,7 @@ from vari.inference import log_gaussian
 
 import IPython
 
-ex = Experiment(name='OOD VAE')
+ex = Experiment(name='OOD AVAE')
 
 
 @ex.config
@@ -21,21 +21,21 @@ def default_configuration():
     tag = 'ood-detection'
     n_epochs = 2000
     batch_size = 32
-    importance_weight = 10
+    importance_samples = 10
     learning_rate = 3e-4
     device = get_device()
 
 
 @ex.automain
-def run(device, n_epochs, batch_size, learning_rate, importance_weight):
+def run(device, n_epochs, batch_size, learning_rate, importance_samples):
     train_dataset = Spirals(n_samples=1000, noise=0.05, radius=1)
     test1_dataset = Spirals(n_samples=1000, noise=0.05, radius=1.5)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=10, pin_memory=device=='cuda')
     test_loader = DataLoader(test1_dataset, batch_size=batch_size, shuffle=False, num_workers=10, pin_memory=device=='cuda')
 
-    # model = AuxilliaryVariationalAutoencoder(x_dim=2, z_dim=2, a_dim=3, h_dims=[64, 64, 64])
-    model = VariationalAutoencoder(x_dim=2, z_dim=2, h_dims=[64, 64, 64])
+    model = AuxilliaryVariationalAutoencoder(x_dim=2, z_dim=2, a_dim=3, h_dims=[64, 64, 64])
+    # model = VariationalAutoencoder(x_dim=2, z_dim=2, h_dims=[64, 64, 64])
     model.to(device)
     print(model)
 
@@ -50,7 +50,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_weight):
         for b, (x, _) in enumerate(train_loader):
             x = x.to(device)
 
-            x = x.repeat(1, importance_weight).view(-1, x.shape[1])
+            x = x.repeat(1, importance_samples).view(-1, x.shape[1])
 
             px, px_mu, px_sigma = model(x)
             kl_divergence = model.kl_divergence
@@ -59,12 +59,12 @@ def run(device, n_epochs, batch_size, learning_rate, importance_weight):
             elbo = likelihood - kl_divergence
             
             # Importance sampling
-            # elbo = elbo.view(-1, importance_weight, 1)  # (B, IW, 1)
+            # elbo = elbo.view(-1, importance_samples, 1)  # (B, IW, 1)
             # elbo = log_sum_exp(elbo, axis=1, sum_op=torch.sum)  # (B, 1, 1)
             # elbo = elbo.view(-1, 1)  # (B, 1)
-            elbo = log_sum_exp(elbo.view(-1, importance_weight, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
-            kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_weight, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
-            likelihood = log_sum_exp(likelihood.view(-1, importance_weight, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
+            elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
+            kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
+            likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
             
             loss = - torch.mean(elbo)
 

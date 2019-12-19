@@ -167,7 +167,7 @@ class VariationalAutoencoder(nn.Module):
         q_z, q_z_mu, q_z_log_var = self.encoder(x)
 
         # Generative p(x|z)
-        p_x, p_x_mu, p_x_log_var = self.decoder(z)
+        p_x, p_x_mu, p_x_log_var = self.decoder(q_z)
 
         # KL Divergence
         self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
@@ -227,7 +227,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
 
         a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_log_var), (p_a_mu, p_a_log_var))
-        z_kl = kld_gaussian_gaussian(z, (z_mu, z_log_var))
+        z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
 
         self.kl_divergence = a_kl + z_kl
 
