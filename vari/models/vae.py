@@ -6,36 +6,13 @@ from torch.nn import init
 
 from vari.layers import GaussianSample, GaussianMerge, GumbelSoftmax
 from vari.inference import log_gaussian, log_standard_gaussian
+from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
 
 
 # TODO Collapse the LadderEncoder and LadderDecoder into the Encoder and Decoder into single classes
 #      and make the LadderVariationalAutoEncoder use these instead
 
 
-def kld_gaussian_gaussian(z, q_param, p_param=None):
-    """
-    Computes the KL-divergence of
-    some element z.
-    KL(q||p) = ∫ q(z) log [ q(z) / p(z) ]
-             = E[log q(z) - log p(z)]
-    :param z: sample from q-distribuion
-    :param q_param: (mu, log_var) of the q-distribution
-    :param p_param: (mu, log_var) of the p-distribution
-    :return: KL(q||p)
-    """
-    (mu, log_var) = q_param
-
-    qz = log_gaussian(z, mu, log_var)
-
-    if p_param is None:
-        pz = log_standard_gaussian(z)
-    else:
-        (mu, log_var) = p_param
-        pz = log_gaussian(z, mu, log_var)
-
-    kl = qz - pz
-
-    return kl
 
 
 class Perceptron(nn.Module):

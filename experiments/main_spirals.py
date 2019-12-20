@@ -42,6 +42,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     epoch = 0
+    i_update = 0
     best_elbo = 1e10
     while epoch < n_epochs:
         model.train()
@@ -69,13 +70,13 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
             optimizer.zero_grad()
 
             total_elbo += elbo.mean().item()
-            total_kl += kl_divergence.mean().item()
             total_log_px += likelihood.mean().item()
+            total_kl += kl_divergence.mean().item()
 
-            i_update = b + b * epoch
-            ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (i_update + 1), step=i_update)
-            ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (i_update + 1), step=i_update)
-            ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (i_update + 1), step=i_update)
+            i_update += 1
+            ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (b + 1), step=i_update)
+            ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=i_update)
+            ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (b + 1), step=i_update)
 
         # import IPython
         # IPython.embed()
