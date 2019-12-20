@@ -13,7 +13,7 @@ from vari.inference import log_gaussian
 
 import IPython
 
-ex = Experiment(name='OOD AVAE')
+ex = Experiment(name='OOD VAE')
 
 
 @ex.config
@@ -28,14 +28,14 @@ def default_configuration():
 
 @ex.automain
 def run(device, n_epochs, batch_size, learning_rate, importance_samples):
-    train_dataset = Spirals(n_samples=1000, noise=0.05, radius=1)
-    test1_dataset = Spirals(n_samples=1000, noise=0.05, radius=1.5)
+    train_dataset = Spirals(n_samples=1000, noise=0.05, rotation=0)
+    test1_dataset = Spirals(n_samples=1000, noise=0.05, rotation=np.pi/2)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=10, pin_memory=device=='cuda')
-    test_loader = DataLoader(test1_dataset, batch_size=batch_size, shuffle=False, num_workers=10, pin_memory=device=='cuda')
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=device=='cuda')
+    test_loader = DataLoader(test1_dataset, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=device=='cuda')
 
-    model = AuxilliaryVariationalAutoencoder(x_dim=2, z_dim=2, a_dim=3, h_dims=[64, 64, 64])
-    # model = VariationalAutoencoder(x_dim=2, z_dim=2, h_dims=[64, 64, 64])
+    # model = AuxilliaryVariationalAutoencoder(x_dim=2, z_dim=2, a_dim=3, h_dims=[64, 64, 64])
+    model = VariationalAutoencoder(x_dim=2, z_dim=2, h_dims=[64, 64, 64])
     model.to(device)
     print(model)
 
