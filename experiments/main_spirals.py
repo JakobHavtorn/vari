@@ -19,7 +19,7 @@ ex = Experiment(name='OOD AVAE')
 @ex.config
 def default_configuration():
     tag = 'ood-detection'
-    n_epochs = 2000
+    n_epochs = 1000
     batch_size = 32
     importance_samples = 10
     learning_rate = 3e-4
@@ -43,7 +43,6 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
 
     epoch = 0
     best_elbo = 1e10
-    # for epoch in range(n_epochs):
     while epoch < n_epochs:
         model.train()
         total_elbo, total_kl, total_log_px = 0, 0, 0
@@ -59,9 +58,6 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
             elbo = likelihood - kl_divergence
             
             # Importance sampling
-            # elbo = elbo.view(-1, importance_samples, 1)  # (B, IW, 1)
-            # elbo = log_sum_exp(elbo, axis=1, sum_op=torch.sum)  # (B, 1, 1)
-            # elbo = elbo.view(-1, 1)  # (B, 1)
             elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
             kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
             likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
@@ -76,7 +72,9 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
             total_kl += model.kl_divergence.mean().item()
             total_log_px += likelihood.mean().item()
             
-            # ex.log_scalar(f'total_loss_b', loss.item(), step=epoch)
+            ex.log_scalar(f'(batch) ELBO', total_elbo / (b + 1), step=epoch)
+            ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=epoch)
+            ex.log_scalar(f'(batch) kl(q|p)', total_kl / (b + 1), step=epoch)
             
         total_elbo = total_elbo / len(train_loader)
         total_log_px = total_log_px / len(train_loader)
