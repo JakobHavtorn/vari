@@ -1,4 +1,4 @@
-
+import numpy as np
 import torch
 import pickle
 
@@ -56,33 +56,37 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
 
             likelihood = log_gaussian(x, px_mu, px_sigma)
             elbo = likelihood - kl_divergence
-            
+
             # Importance sampling
-            elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
-            kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
-            likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.sum).view(-1, 1)  # (B, 1, 1)
-            
+            elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
+            kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
+            likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
+
             loss = - torch.mean(elbo)
 
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
-            total_elbo += loss.item()
-            total_kl += model.kl_divergence.mean().item()
+            total_elbo += elbo.mean().item()
+            total_kl += kl_divergence.mean().item()
             total_log_px += likelihood.mean().item()
-            
-            ex.log_scalar(f'(batch) ELBO', total_elbo / (b + 1), step=epoch)
-            ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=epoch)
-            ex.log_scalar(f'(batch) kl(q|p)', total_kl / (b + 1), step=epoch)
+
+            i_update = b + b * epoch
+            ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (i_update + 1), step=i_update)
+            ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (i_update + 1), step=i_update)
+            ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (i_update + 1), step=i_update)
+
+        # import IPython
+        # IPython.embed()
             
         total_elbo = total_elbo / len(train_loader)
         total_log_px = total_log_px / len(train_loader)
         total_kl = total_kl / len(train_loader)
             
-        ex.log_scalar(f'ELBO', total_elbo, step=epoch)
+        ex.log_scalar(f'ELBO log p(x)', total_elbo, step=epoch)
         ex.log_scalar(f'log p(x|z)', total_log_px, step=epoch)
-        ex.log_scalar(f'kl(q|p)', total_kl, step=epoch)
+        ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
 
         print(f'Epoch {epoch} | ELBO {total_elbo:.4f} | log p(x|z) {total_log_px:.4f} | KL {total_kl:.4f}')
 
