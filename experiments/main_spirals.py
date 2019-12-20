@@ -43,7 +43,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
 
     epoch = 0
     i_update = 0
-    best_elbo = 1e10
+    best_elbo = -1e10
     while epoch < n_epochs:
         model.train()
         total_elbo, total_kl, total_log_px = 0, 0, 0
@@ -91,8 +91,9 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
 
         print(f'Epoch {epoch} | ELBO {total_elbo:.4f} | log p(x|z) {total_log_px:.4f} | KL {total_kl:.4f}')
 
-        if epoch % 10 == 0 and total_elbo < best_elbo:
+        if epoch % 10 == 0 and total_elbo > best_elbo:
             best_elbo = total_elbo
             torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
+            print(f'Saved model at ELBO {total_elbo:.4f}')
         
         epoch += 1
