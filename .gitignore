@@ -135,7 +135,7 @@ dmypy.json
 .vscode
 
 # Images
-.png
+*.png
 
 # Pickle files
-.pkl
+*.pkl
