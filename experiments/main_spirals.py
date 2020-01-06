@@ -6,10 +6,11 @@ from torch.utils.data import DataLoader
 
 from model_utils.experiment import Experiment
 
+import vari.models.vae
+
 from vari.datasets import Spirals
-from vari.models.vae import VariationalAutoencoder, AuxilliaryVariationalAutoencoder
 from vari.utilities import get_device, log_sum_exp
-from vari.inference import log_gaussian
+from vari.inference import log_gaussian, DeterministicWarmup
 
 import IPython
 
@@ -23,23 +24,32 @@ def default_configuration():
     batch_size = 32
     importance_samples = 10
     learning_rate = 3e-4
+    vae_type = 'LadderVariationalAutoencoder' # AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
+    vae_kwargs = dict(
+        x_dim=2,
+        z_dim=[2, 2],
+        h_dim=[64, 64]
+    )
+    warmup_epochs = 200
     device = get_device()
 
 
 @ex.automain
-def run(device, n_epochs, batch_size, learning_rate, importance_samples):
+def run(device, vae_type, vae_kwargs, n_epochs, batch_size, learning_rate, importance_samples, warmup_epochs):
     train_dataset = Spirals(n_samples=1000, noise=0.05, rotation=0)
     test1_dataset = Spirals(n_samples=1000, noise=0.05, rotation=np.pi/2)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=device=='cuda')
     test_loader = DataLoader(test1_dataset, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=device=='cuda')
 
-    # model = AuxilliaryVariationalAutoencoder(x_dim=2, z_dim=2, a_dim=3, h_dims=[64, 64, 64])
-    model = VariationalAutoencoder(x_dim=2, z_dim=2, h_dims=[64, 64, 64])
+    model = getattr(vari.models.vae, vae_type)
+    model = model(**vae_kwargs)
     model.to(device)
     print(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    deterministic_warmup = DeterministicWarmup(n=warmup_epochs, t_start=int(warmup_epochs == 0))
 
     epoch = 0
     i_update = 0
@@ -47,6 +57,8 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
     while epoch < n_epochs:
         model.train()
         total_elbo, total_kl, total_log_px = 0, 0, 0
+        beta = next(deterministic_warmup)
+        print(beta)
         for b, (x, _) in enumerate(train_loader):
             x = x.to(device)
 
@@ -56,7 +68,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
             kl_divergence = model.kl_divergence
 
             likelihood = log_gaussian(x, px_mu, px_sigma)
-            elbo = likelihood - kl_divergence
+            elbo = likelihood - beta * kl_divergence
 
             # Importance sampling
             elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
@@ -77,6 +89,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
             ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (b + 1), step=i_update)
             ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=i_update)
             ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (b + 1), step=i_update)
+            ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * total_kl / (b + 1), step=i_update)
 
         # import IPython
         # IPython.embed()
@@ -89,7 +102,7 @@ def run(device, n_epochs, batch_size, learning_rate, importance_samples):
         ex.log_scalar(f'log p(x|z)', total_log_px, step=epoch)
         ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
 
-        print(f'Epoch {epoch} | ELBO {total_elbo:.4f} | log p(x|z) {total_log_px:.4f} | KL {total_kl:.4f}')
+        print(f'Epoch {epoch} | ELBO {total_elbo:2.4f} | log p(x|z) {total_log_px:2.4f} | KL {total_kl:2.4f} | KL {beta * total_kl:2.4f}')
 
         if epoch % 10 == 0 and total_elbo > best_elbo:
             best_elbo = total_elbo
