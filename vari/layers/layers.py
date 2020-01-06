@@ -42,7 +42,6 @@ class GaussianSample(Stochastic):
 
     def forward(self, x):
         mu = self.mu(x)
-        #log_var = F.softplus(self.log_var(x))
         log_var = self.log_var(x)
 
         return self.reparametrize(mu, log_var), mu, log_var

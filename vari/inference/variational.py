@@ -8,7 +8,7 @@ from vari.utilities import log_sum_exp, enumerate_discrete
 from vari.inference.distributions import log_standard_categorical
 
 
-class ImportanceWeightedSampler(object):
+class ImportanceWeightedSampler():
     """
     Importance weighted sampler [Burda 2015] to
     be used in conjunction with SVI.
@@ -31,23 +31,26 @@ class ImportanceWeightedSampler(object):
         return elbo.view(-1)
 
 
-class DeterministicWarmup(object):
+class DeterministicWarmup():
     """
     Linear deterministic warm-up as described in
     [Sønderby 2016].
     """
-    def __init__(self, n=100, t_max=1):
-        self.t = 0
+    def __init__(self, n=200, t_max=1, t_start=0):
+        self.n = n
         self.t_max = t_max
-        self.inc = 1/n
+        self.t = t_start
+        self.inc = 1 / n
+        self.t -= self.inc  # Give t_start on first __next__
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        t = self.t + self.inc
+        if self.t > self.t_max:
+            return self.t
 
-        self.t = self.t_max if t > self.t_max else t
+        self.t += self.inc
         return self.t
 
 
