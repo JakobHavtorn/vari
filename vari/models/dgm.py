@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn import init
 
 from .vae import VariationalAutoencoder
-from .vae import Encoder, Decoder, LadderEncoder, LadderDecoder
+from .vae import DenseSequentialCoder, LadderEncoder, LadderDecoder
 
 
 class Classifier(nn.Module):
@@ -41,8 +41,8 @@ class DeepGenerativeModel(VariationalAutoencoder):
         [x_dim, self.y_dim, z_dim, h_dim] = dims
         super(DeepGenerativeModel, self).__init__([x_dim, z_dim, h_dim])
 
-        self.encoder = Encoder([x_dim + self.y_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim + self.y_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = DenseSequentialCoder([x_dim + self.y_dim, h_dim, z_dim])
+        self.decoder = DenseSequentialCoder([z_dim + self.y_dim, list(reversed(h_dim)), x_dim])
         self.classifier = Classifier([x_dim, h_dim[0], self.y_dim])
 
         for m in self.modules():
@@ -68,7 +68,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
 
     def sample(self, z, y):
         """
-        Samples from the Decoder to generate an x.
+        Samples from the DenseSequentialCoder to generate an x.
         :param z: latent normal variable
         :param y: label (one-hot encoded)
         :return: x
@@ -128,13 +128,13 @@ class AuxiliaryDeepGenerativeModel(DeepGenerativeModel):
         [x_dim, y_dim, z_dim, a_dim, h_dim] = dims
         super(AuxiliaryDeepGenerativeModel, self).__init__([x_dim, y_dim, z_dim, h_dim])
 
-        self.aux_encoder = Encoder([x_dim, h_dim, a_dim])
-        self.aux_decoder = Encoder([x_dim + z_dim + y_dim, list(reversed(h_dim)), a_dim])
+        self.aux_encoder = DenseSequentialCoder([x_dim, h_dim, a_dim])
+        self.aux_decoder = DenseSequentialCoder([x_dim + z_dim + y_dim, list(reversed(h_dim)), a_dim])
 
         self.classifier = Classifier([x_dim + a_dim, h_dim[0], y_dim])
 
-        self.encoder = Encoder([a_dim + y_dim + x_dim, h_dim, z_dim])
-        self.decoder = Decoder([y_dim + z_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = DenseSequentialCoder([a_dim + y_dim + x_dim, h_dim, z_dim])
+        self.decoder = DenseSequentialCoder([y_dim + z_dim, list(reversed(h_dim)), x_dim])
 
     def classify(self, x):
         # Auxiliary inference q(a|x)
@@ -197,7 +197,7 @@ class LadderDeepGenerativeModel(DeepGenerativeModel):
 
         self.encoder = nn.ModuleList(encoder_layers)
         self.decoder = nn.ModuleList(decoder_layers)
-        self.reconstruction = Decoder([z_dim[0]+y_dim, h_dim, x_dim])
+        self.reconstruction = DenseSequentialCoder([z_dim[0]+y_dim, h_dim, x_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
