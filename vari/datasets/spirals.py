@@ -4,13 +4,17 @@ from torch.utils.data import Dataset
 
 
 def make_data_spiral(n_samples=1000, shuffle=True, noise=.05, rotation=0, start_radius=np.pi, rounds=1,
-                     normalizing_constant=2*np.pi):
+                     normalizing_constant=2*np.pi, seed=0):
+    np.random.seed(seed)
+    # Rotation matrix
     rot_mat = np.array([[np.cos(rotation),-np.sin(rotation)],
                         [np.sin(rotation), np.cos(rotation)]])
     
+    # Theta values for both classes
     #theta = np.sqrt(np.random.rand(n_samples)) * 2 * np.pi
     theta = np.linspace(0, rounds * 2 * np.pi, n_samples)
 
+    # Radii values for class a and b
     r_a = -theta - start_radius
     data_a = np.array([np.cos(theta) * r_a, np.sin(theta) * r_a]).T
     x_a = data_a + noise * np.random.randn(n_samples, 2)
@@ -27,15 +31,15 @@ def make_data_spiral(n_samples=1000, shuffle=True, noise=.05, rotation=0, start_
     res = np.append(res_a, res_b, axis=0)
     np.random.shuffle(res)
 
-    values = res[:, :2] / normalizing_constant
+    values = res[:, :2] / normalizing_constant  # Normalize to have radii of 2π scaled down to 2π/normalizing_constant
     labels = np.identity(res[:, 2].astype(int).max() + 1)[res[:, 2].astype(int)]
     return values.astype(np.float32), labels.astype(np.int32)
 
 
 class Spirals(Dataset):
-    def __init__(self, n_samples=1000, noise=0.05, rotation=0, start_radius=np.pi, rounds=1):
-        examples, labels = make_data_spiral(n_samples=n_samples, noise=noise,
-                                            rotation=rotation, start_radius=start_radius, rounds=rounds)
+    def __init__(self, n_samples=1000, noise=0.05, rotation=0, start_radius=np.pi, rounds=1, seed=0):
+        examples, labels = make_data_spiral(n_samples=n_samples, noise=noise, rotation=rotation,
+                                            start_radius=start_radius, rounds=rounds, seed=seed)
         self.examples = examples
         self.labels = labels
         
