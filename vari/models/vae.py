@@ -104,15 +104,15 @@ class VariationalAutoencoder(nn.Module):
         :return: reconstructed input
         """
         # Latent inference q(z|a,x)
-        q_z, q_z_mu, q_z_log_var = self.encoder(x)
+        z, q_z_mu, q_z_log_var = self.encoder(x)
 
         # Generative p(x|z)
-        p_x, p_x_mu, p_x_log_var = self.decoder(q_z)
+        x, p_x_mu, p_x_log_var = self.decoder(z)
 
         # KL Divergence
-        self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
+        self.kl_divergence = kld_gaussian_gaussian(z, (q_z_mu, q_z_log_var))
 
-        return p_x, p_x_mu, p_x_log_var
+        return x, p_x_mu, p_x_log_var
 
     def sample(self, z):
         """
@@ -140,8 +140,6 @@ class DeepVariationalAutoencoder(nn.Module):
         self.h_dim = h_dim
 
         dims = [x_dim, *z_dim]
-        import IPython
-        IPython.embed()
 
         encoder_layers = [DenseSequentialCoder(x_dim=dims[i - 1], z_dim=dims[i], h_dim=h_dim) for i in range(1, len(dims))]
         decoder_layers = [DenseSequentialCoder(x_dim=dims[i], z_dim=dims[i - 1], h_dim=h_dim) for i in range(1, len(dims))][::-1]
@@ -164,29 +162,23 @@ class DeepVariationalAutoencoder(nn.Module):
         latents = []
         z = x
         for encoder in self.encoder:
-            z, z_mu, z_log_var = encoder(z)
-            latents.append((z, z_mu, z_log_var))
+            z, q_z_mu, q_z_log_var = encoder(z)
+            latents.append((z, q_z_mu, q_z_log_var))
         return latents
 
     def decode(self, latents):
-        # TODO Check order of encoded latents and decoding
-        # TODO Can i==0 case be computed before loop?
-        self.kl_divergence = 0
-        for i, decoder in enumerate([None, *self.decoder]):
-            _, l_mu, l_log_var = latents[i]
-            if i == 0:
-                # If at top, encoder == decoder, use prior for KL.
-                z = latents[i][0]
-                self.kl_divergence += kld_gaussian_gaussian(z, (l_mu, l_log_var))
-            else:
-                # Perform downward merge of information.
-                z, kl = decoder(z, l_mu, l_log_var)
-                self.kl_divergence += kld_gaussian_gaussian(*kl)
+        # At top, use prior for KL.
+        z, l_mu, l_log_var = latents[0]
+        self.kl_divergence = kld_gaussian_gaussian(z, (l_mu, l_log_var))
+        for i, decoder in enumerate(self.decoder, start=1):
+            # Top-down generative path
+            z, p_z_mu, p_z_log_var = decoder(z)
+            z, q_z_mu, q_z_log_var = latents[i]
+            self.kl_divergence += kld_gaussian_gaussian(z, (q_z_mu, q_z_log_var), (p_z_mu, p_z_log_var))
+        x, p_x_mu, p_x_log_var = z, p_z_mu, p_z_log_var
+        return x, p_x_mu, p_x_log_var
 
-        p_x, p_x_mu, p_x_log_var = self.reconstruction(z)
-        return p_x, p_x_mu, p_x_log_var
-
-    def forward(self, x, y=None):
+    def forward(self, x):
         """
         Runs a data point through the model in order
         to provide its reconstruction and q distribution
@@ -195,15 +187,16 @@ class DeepVariationalAutoencoder(nn.Module):
         :return: reconstructed input
         """
         # Latent inference q(z|a,x)
-        latents_q_z = self.encode(x)
+        latents = self.encode(x)
 
         # Generative p(x|z)
-        p_x, p_x_mu, p_x_log_var = self.decode(latents_q_z)
+        latents = list(reversed(latents))
+        x, p_x_mu, p_x_log_var = self.decode(latents)
 
-        # KL Divergence
-        self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
+        # # KL Divergence
+        # self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
 
-        return p_x, p_x_mu, p_x_log_var
+        return x, p_x_mu, p_x_log_var
 
     def sample(self, z):
         """

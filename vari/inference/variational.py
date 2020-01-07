@@ -39,8 +39,8 @@ class DeterministicWarmup():
     def __init__(self, n=200, t_max=1, t_start=0):
         self.n = n
         self.t_max = t_max
-        self.t = t_start
-        self.inc = 1 / n
+        self.t = t_start if n != 0 else t_max
+        self.inc = 1 / n if n != 0 else 0
         self.t -= self.inc  # Give t_start on first __next__
 
     @property
