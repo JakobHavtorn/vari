@@ -40,6 +40,12 @@ class Spirals(Dataset):
     def __init__(self, n_samples=1000, noise=0.05, rotation=0, start_radius=np.pi, rounds=1, seed=0):
         examples, labels = make_data_spiral(n_samples=n_samples, noise=noise, rotation=rotation,
                                             start_radius=start_radius, rounds=rounds, seed=seed)
+        self.n_samples = n_samples
+        self.noise = noise
+        self.rotation = rotation
+        self.start_radius = start_radius
+        self.rounds = rounds
+        self.seed = seed
         self.examples = examples
         self.labels = labels
         
@@ -48,3 +54,7 @@ class Spirals(Dataset):
     
     def __len__(self):
         return len(self.examples)
+    
+    def __repr__(self):
+        return f"Spirals(n_samples={self.n_samples}, noise={self.noise}, rotation={self.rotation}, " \
+               f"start_radius={self.start_radius}, rounds={self.rounds}, seed={self.seed})"

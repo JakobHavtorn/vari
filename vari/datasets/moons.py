@@ -14,11 +14,17 @@ def make_data_moons(n_samples=1000, shuffle=True, noise=.05, seed=0):
 class Moons(Dataset):
     def __init__(self, n_samples=1000, noise=0.05, seed=0):
         examples, labels = make_data_moons(n_samples=n_samples, noise=noise, seed=seed)
+        self.n_samples = n_samples
+        self.noise = noise
+        self.seed = seed
         self.examples = examples
         self.labels = labels
-        
+
     def __getitem__(self, idx):
         return self.examples[idx], self.labels[idx]
-    
+
     def __len__(self):
         return len(self.examples)
+
+    def __repr__(self):
+        return f"Moons(n_samples={self.n_samples}, noise={self.noise}, seed={self.seed})"
