@@ -3,7 +3,7 @@ import torch
 from vari.inference import log_gaussian, log_standard_gaussian
 
 
-def kld_gaussian_gaussian(z, q_param, p_param=None):
+def kld_gaussian_gaussian(z, q_param, p_param=(0, 1)):
     """
     Computes the KL-divergence of
     some element z.
@@ -18,7 +18,7 @@ def kld_gaussian_gaussian(z, q_param, p_param=None):
 
     qz = log_gaussian(z, mu, log_var)
 
-    if p_param is None:
+    if p_param == (0, 1):
         pz = log_standard_gaussian(z)
     else:
         (mu, log_var) = p_param
