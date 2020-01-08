@@ -30,7 +30,7 @@ def default_configuration():
         noise=0.0
     )
 
-    n_epochs = 500
+    n_epochs = 300
     batch_size = 32
     importance_samples = 10
     learning_rate = 3e-4
