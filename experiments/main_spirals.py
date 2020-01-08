@@ -21,24 +21,24 @@ ex = Experiment(name='OOD VAE')
 @ex.config
 def default_configuration():
     tag = 'ood-detection'
+    dataset = 'moons'
     n_epochs = 300
     batch_size = 32
     importance_samples = 10
-    learning_rate = 3e-4
-    dataset = 'moons'  # 'moons'
-    # vae_type = 'DeepVariationalAutoencoder'  # LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    # vae_kwargs = dict(
-    #     x_dim=2,
-    #     z_dim=[2, 2],
-    #     h_dim=[64, 64]
-    # )
+    learning_rate = 2e-4
+    warmup_epochs = 0
     vae_type = 'VariationalAutoencoder'  # LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
     vae_kwargs = dict(
         x_dim=2,
         z_dim=2,
         h_dim=[64, 64]
     )
-    warmup_epochs = 0
+    # vae_type = 'DeepVariationalAutoencoder'  # LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
+    # vae_kwargs = dict(
+    #     x_dim=2,
+    #     z_dim=[2, 2],
+    #     h_dim=[64, 64]
+    # )
     device = get_device()
     seed = 0
 
@@ -92,7 +92,7 @@ def run(device, vae_type, vae_kwargs, dataset, n_epochs, batch_size, learning_ra
                 kl_divergence = model.kl_divergence
 
                 likelihood = log_gaussian(x_iw, px_mu, px_sigma)
-                elbo = likelihood #- beta * kl_divergence
+                elbo = likelihood - beta * kl_divergence
 
                 # Importance sampling
                 # NOTE: Training is slow compared to TF version and ELBO values are muddy
