@@ -350,7 +350,6 @@ class LadderVariationalAutoencoder(nn.Module):
         layers to improve the log-likelihood estimate.
         :param dims: x, z and hidden dimensions of the networks
         """
-        # super(LadderVariationalAutoencoder, self).__init__([x_dim, z_dim[0], h_dim])
         super().__init__()
         dims = [x_dim, *h_dim]
         encoder_layers = [LadderEncoder([dims[i - 1], dims[i], z_dim[i - 1]]) for i in range(1, len(dims))]
@@ -407,7 +406,7 @@ class LadderVariationalAutoencoder(nn.Module):
 
 class GumbelAutoencoder(nn.Module):
     def __init__(self, dims, n_samples=100):
-        super(GumbelAutoencoder, self).__init__()
+        super().__init__()
 
         [x_dim, z_dim, h_dim] = dims
         self.z_dim = z_dim
