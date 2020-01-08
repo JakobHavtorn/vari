@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from torch.autograd import Variable
 
+from vari.utilities import get_device
 
 class Stochastic(nn.Module):
     """
@@ -13,7 +14,7 @@ class Stochastic(nn.Module):
     parametrised by mu and log_var.
     """
     def reparametrize(self, mu, log_var):
-        epsilon = Variable(torch.randn(mu.size()), requires_grad=False)
+        epsilon = torch.randn(mu.size(), requires_grad=False, device=get_device())
 
         if mu.is_cuda:
             epsilon = epsilon.cuda()
@@ -26,6 +27,7 @@ class Stochastic(nn.Module):
         z = mu.addcmul(std, epsilon)
 
         return z
+
 
 class GaussianSample(Stochastic):
     """
@@ -88,7 +90,7 @@ class GumbelSoftmax(Stochastic):
         self.out_features = out_features
         self.n_distributions = n_distributions
 
-        self.logits = nn.Linear(in_features, n_distributions*out_features)
+        self.logits = nn.Linear(in_features, n_distributions * out_features)
 
     def forward(self, x, tau=1.0):
         logits = self.logits(x).view(-1, self.n_distributions)
