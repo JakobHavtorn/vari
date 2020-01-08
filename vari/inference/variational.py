@@ -41,7 +41,7 @@ class DeterministicWarmup():
         self.t_max = t_max
         self.t = t_start if n != 0 else t_max
         self.inc = 1 / n if n != 0 else 0
-        self.t -= self.inc  # Give t_start on first __next__
+        self.t -= self.inc  # Return t_start on first __next__
 
     @property
     def is_done(self):
