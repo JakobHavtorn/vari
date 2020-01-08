@@ -6,6 +6,7 @@ from torch.autograd import Variable
 
 from vari.utilities import get_device
 
+
 class Stochastic(nn.Module):
     """
     Base stochastic layer that uses the
@@ -103,7 +104,7 @@ class GumbelSoftmax(Stochastic):
         return sample, softmax
 
     def reparametrize(self, logits, tau=1.0):
-        epsilon = Variable(torch.rand(logits.size()), requires_grad=False)
+        epsilon = Variable(torch.rand(logits.size()), requires_grad=False)  # TODO is this supposed to be randn?
 
         if logits.is_cuda:
             epsilon = epsilon.cuda()
