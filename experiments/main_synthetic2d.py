@@ -36,21 +36,46 @@ def default_configuration():
     learning_rate = 3e-4
     warmup_epochs = 0
 
-    vae_type = 'VariationalAutoencoder'  # LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    vae_kwargs = dict(
-        x_dim=2,
-        z_dim=2,
-        h_dim=[64, 64]
-    )
-    # vae_type = 'DeepVariationalAutoencoder'  # LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    # vae_kwargs = dict(
-    #     x_dim=2,
-    #     z_dim=[2, 2],
-    #     h_dim=[64, 64]
-    # )
+    # VariationalAutoencoder, LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
+    # TODO VariationalAutoencoder should support multiple stochastic layers instead of separate DeepVariationalAutoencoder class
+    vae_type = 'VariationalAutoencoder'
+    # vae_type = 'DeepVariationalAutoencoder'
+    # vae_type = 'AuxilliaryVariationalAutoencoder'
+    # vae_type = 'LadderVariationalAutoencoder'
+    vae_kwargs = get_vae_kwargs(vae_type)
+
     device = get_device()
     seed = 0
 
+
+def get_vae_kwargs(vae_type):
+    if vae_type == 'VariationalAutoencoder':
+        vae_kwargs = dict(
+            x_dim=2,
+            z_dim=2,
+            h_dim=[64, 64]
+        )
+    elif vae_type == 'DeepVariationalAutoencoder':
+        vae_kwargs = dict(
+            x_dim=2,
+            z_dim=[2, 2],
+            h_dim=[64, 64]
+        )
+    elif vae_type == 'AuxilliaryVariationalAutoencoder':
+        vae_kwargs = dict(
+            x_dim=2,
+            z_dim=2,
+            a_dim=2,
+            h_dim=[64, 64]
+        )
+    elif vae_type == 'LadderVariationalAutoencoder':
+        vae_kwargs = dict(
+            x_dim=2,
+            z_dim=[2, 2],
+            h_dim=[64, 64]
+        )
+    return vae_kwargs
+    
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
