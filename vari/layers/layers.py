@@ -7,6 +7,14 @@ from torch.autograd import Variable
 from vari.utilities import get_device
 
 
+class IdentityLayer(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        
+    def forward(self, x):
+        return x
+
+
 class Stochastic(nn.Module):
     """
     Base stochastic layer that uses the
@@ -36,7 +44,7 @@ class GaussianSample(Stochastic):
     Gaussian distribution.
     """
     def __init__(self, in_features, out_features):
-        super(GaussianSample, self).__init__()
+        super().__init__()
         self.in_features = in_features
         self.out_features = out_features
 
@@ -59,7 +67,7 @@ class GaussianMerge(GaussianSample):
     a sample from this new distribution.
     """
     def __init__(self, in_features, out_features):
-        super(GaussianMerge, self).__init__(in_features, out_features)
+        super().__init__(in_features, out_features)
 
     def forward(self, z, mu1, log_var1):
         # Calculate precision of each distribution
@@ -86,7 +94,7 @@ class GumbelSoftmax(Stochastic):
     backpropagation using the Gumbel-Softmax trick.
     """
     def __init__(self, in_features, out_features, n_distributions):
-        super(GumbelSoftmax, self).__init__()
+        super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.n_distributions = n_distributions
