@@ -121,7 +121,7 @@ class VariationalAutoencoder(nn.Module):
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """
-        return self.decoder(z)
+        return self.decode(z)
 
 
 class DeepVariationalAutoencoder(nn.Module):
@@ -205,7 +205,8 @@ class DeepVariationalAutoencoder(nn.Module):
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """
-        return self.decoder(z)
+        #TODO This should be different from decoder
+        return self.decode(z)
 
 
 class AuxilliaryVariationalAutoencoder(nn.Module):
@@ -274,6 +275,9 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         self.kl_divergence = a_kl + z_kl
 
         return p_x, p_x_mu, p_x_log_var
+    
+    def sample(self, z):
+        return self.decode(z)
 
 
 class LadderEncoder(nn.Module):
@@ -366,31 +370,35 @@ class LadderVariationalAutoencoder(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, x):
-        # Gather latent representation
-        # from encoders along with final z.
+    def encode(self, x):
         latents = []
         for encoder in self.encoder:
-            x, (z, mu, log_var) = encoder(x)
-            latents.append((mu, log_var))
+            x, (z, z_mu, z_log_var) = encoder(x)
+            latents.append((z, z_mu, z_log_var))
+        return latents
 
-        latents = list(reversed(latents))
-
+    def decode(self, latents):
         self.kl_divergence = 0
-        for i, decoder in enumerate([-1, *self.decoder]):
-            # If at top, encoder == decoder,
-            # use prior for KL.
-            l_mu, l_log_var = latents[i]
+        for i, decoder in enumerate([None, *self.decoder]):
+            _, l_mu, l_log_var = latents[i]
             if i == 0:
+                # If at top, encoder == decoder, use prior for KL.
+                z = latents[i][0]
                 self.kl_divergence += kld_gaussian_gaussian(z, (l_mu, l_log_var))
-
-            # Perform downword merge of information.
             else:
+                # Perform downward merge of information.
                 z, kl = decoder(z, l_mu, l_log_var)
                 self.kl_divergence += kld_gaussian_gaussian(*kl)
 
-        x_mu = self.reconstruction(z)
-        return x_mu
+        p_x, p_x_mu, p_x_log_var = self.reconstruction(z)
+        return p_x, p_x_mu, p_x_log_var
+
+    def forward(self, x):
+        # Gather latent representation from encoders along with final z.
+        latents = self.encode(x)
+        latents = list(reversed(latents))
+        p_x, p_x_mu, p_x_log_var = self.decode(latents)
+        return p_x, p_x_mu, p_x_log_var
 
     def sample(self, z):
         for decoder in self.decoder:
