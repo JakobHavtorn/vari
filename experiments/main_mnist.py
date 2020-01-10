@@ -10,9 +10,11 @@ from model_utils.experiment import Experiment
 
 import vari.models.vae
 
-from vari.datasets import Spirals, Moons
+from vari.datasets import MNIST
 from vari.utilities import get_device, log_sum_exp
 from vari.inference import log_gaussian, DeterministicWarmup
+
+import torchvision.transforms
 
 import IPython
 
@@ -24,10 +26,15 @@ ex = Experiment(name='OOD VAE')
 def default_configuration():
     tag = 'ood-detection'
 
-    dataset_name = 'Moons'
+    dataset_name = 'MNIST'
+    exclude_labels = '[4]'
     dataset_kwargs = dict(
-        n_samples=10000,
-        noise=0.0
+        split='join',
+        exclude_labels=eval(exclude_labels),
+        transform=torchvision.transforms.Compose([
+            torchvision.transforms.Normalize(0, 255, inplace=False),
+            torchvision.transforms.Lambda(lambda x: x.flatten())
+        ])
     )
 
     n_epochs = 300
@@ -51,26 +58,26 @@ def default_configuration():
 def get_vae_kwargs(vae_type):
     if vae_type == 'VariationalAutoencoder':
         vae_kwargs = dict(
-            x_dim=2,
+            x_dim=784,
             z_dim=2,
             h_dim=[64, 64]
         )
     elif vae_type == 'DeepVariationalAutoencoder':
         vae_kwargs = dict(
-            x_dim=2,
+            x_dim=784,
             z_dim=[2, 2],
             h_dim=[64, 64]
         )
     elif vae_type == 'AuxilliaryVariationalAutoencoder':
         vae_kwargs = dict(
-            x_dim=2,
+            x_dim=784,
             z_dim=2,
             a_dim=2,
             h_dim=[64, 64]
         )
     elif vae_type == 'LadderVariationalAutoencoder':
         vae_kwargs = dict(
-            x_dim=2,
+            x_dim=784,
             z_dim=[2, 2],
             h_dim=[64, 64]
         )
@@ -117,7 +124,8 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
                 optimizer.zero_grad()
                 
                 # Importance sampling
-                x_iw = x.repeat(1, importance_samples).view(-1, x.shape[1])
+                x_iw = x.view(x.shape[0], np.prod(x.shape[1:]))
+                x_iw = x_iw.repeat(1, importance_samples).view(-1, x_iw.shape[1])
                 
                 px, px_mu, px_sigma = model(x_iw)
                 kl_divergence = model.kl_divergence

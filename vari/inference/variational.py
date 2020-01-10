@@ -51,10 +51,9 @@ class DeterministicWarmup():
         return self
 
     def __next__(self):
-        if self.t >= self.t_max:
-            return self.t
-
         self.t += self.inc
+        if self.t >= self.t_max:
+            return self.t_max
         return self.t
 
 

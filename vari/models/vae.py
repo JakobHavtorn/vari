@@ -9,7 +9,7 @@ from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
 
 
-class Perceptron(nn.Module):
+class MultiLayeredPerceptron(nn.Module):
     def __init__(self, dims, activation_fn=F.relu, output_activation=None):
         super().__init__()
         self.dims = dims
@@ -570,9 +570,9 @@ class GumbelAutoencoder(nn.Module):
         self.z_dim = z_dim
         self.n_samples = n_samples
 
-        self.encoder = Perceptron([x_dim, *h_dim])
+        self.encoder = MultiLayerPerceptron([x_dim, *h_dim])
         self.sampler = GumbelSoftmax(h_dim[-1], z_dim, n_samples)
-        self.decoder = Perceptron([z_dim, *reversed(h_dim), x_dim], output_activation=F.sigmoid)
+        self.decoder = MultiLayerPerceptron([z_dim, *reversed(h_dim), x_dim], output_activation=F.sigmoid)
 
         self.kl_divergence = 0
 

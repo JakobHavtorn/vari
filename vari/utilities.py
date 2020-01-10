@@ -34,7 +34,7 @@ def enumerate_discrete(x, y_dim):
     return Variable(generated.float())
 
 
-def onehot(k):
+def onehot_encode(k):
     """
     Converts a number to its one-hot or 1-of-k representation
     vector.
