@@ -27,14 +27,14 @@ def default_configuration():
     tag = 'ood-detection'
 
     dataset_name = 'MNIST'
-    exclude_labels = '[4]'
+    exclude_labels = [4]
     dataset_kwargs = dict(
         split='join',
-        exclude_labels=eval(exclude_labels),
-        transform=torchvision.transforms.Compose([
-            torchvision.transforms.Normalize(0, 255, inplace=False),
-            torchvision.transforms.Lambda(lambda x: x.flatten())
-        ])
+        exclude_labels=exclude_labels,
+        # transform=torchvision.transforms.Compose([
+        #     torchvision.transforms.Normalize(0, 255, inplace=False),
+        #     torchvision.transforms.Lambda(lambda x: x.flatten())
+        # ])
     )
 
     n_epochs = 300
@@ -116,7 +116,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
     try:
         while epoch < n_epochs:
             model.train()
-            total_elbo, total_kl, total_log_px = 0, 0, 0
+            total_elbo, total_kl, total_likelihood = 0, 0, 0
             beta = next(deterministic_warmup)
             for b, (x, _) in enumerate(train_loader):
                 x = x.to(device)
@@ -144,28 +144,30 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
                 optimizer.step()
 
                 total_elbo += elbo.mean().item()
-                total_log_px += likelihood.mean().item()
+                total_likelihood += likelihood.mean().item()
                 total_kl += kl_divergence.mean().item()
 
                 ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (b + 1), step=i_update)
-                ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=i_update)
+                ex.log_scalar(f'(batch) log p(x|z)', total_likelihood / (b + 1), step=i_update)
                 ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (b + 1), step=i_update)
                 ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * total_kl / (b + 1), step=i_update)
                 i_update += 1
                 
             total_elbo = total_elbo / len(train_loader)
-            total_log_px = total_log_px / len(train_loader)
+            total_likelihood = total_likelihood / len(train_loader)
             total_kl = total_kl / len(train_loader)
                 
             ex.log_scalar(f'ELBO log p(x)', total_elbo, step=epoch)
-            ex.log_scalar(f'log p(x|z)', total_log_px, step=epoch)
+            ex.log_scalar(f'log p(x|z)', total_likelihood, step=epoch)
             ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
             ex.log_scalar(f'ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
 
-            print(f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_log_px: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}')
+            print(f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}')
 
             if epoch % 10 == 0 and total_elbo > best_elbo and deterministic_warmup.is_done:
                 best_elbo = total_elbo
+                best_kl = total_kl
+                best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             
@@ -173,4 +175,4 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
     except KeyboardInterrupt:
         print('Interrupted experiment')
 
-    return f'ELBO={round(best_elbo, 4)}'
+    return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
