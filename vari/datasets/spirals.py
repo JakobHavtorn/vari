@@ -3,7 +3,7 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-def make_data_spiral(n_samples=1000, shuffle=True, noise=.05, rotation=0, start_radius=np.pi, rounds=1,
+def make_data_spiral(n_samples=10000, shuffle=True, noise=0.0, rotation=0, start_radius=np.pi, rounds=1,
                      normalizing_constant=2*np.pi, seed=0):
     np.random.seed(seed)
     # Rotation matrix

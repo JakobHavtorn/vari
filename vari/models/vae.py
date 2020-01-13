@@ -1,10 +1,12 @@
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn import init
 
-from vari.layers import IdentityLayer, GaussianSample, GaussianMerge, GumbelSoftmax
+from vari.layers import IdentityLayer, GaussianSample, BernoulliSample, GaussianMerge, GumbelSoftmax
 from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
 
@@ -69,15 +71,15 @@ class VariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim):
+    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer=GaussianSample, decoder_sample_layer=GaussianSample):
         super().__init__()
 
-        self.x_dim = x_dim
+        self.x_dim = x_dim  # if isinstance(x_dim, int) else np.prod(x_dim)  # The dim or flatten
         self.z_dim = z_dim
         self.h_dim = h_dim
 
-        self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim)
-        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)))
+        self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer)
+        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer)
         self.kl_divergence = 0
         self.initialize()
 
@@ -104,15 +106,15 @@ class VariationalAutoencoder(nn.Module):
         :return: reconstructed input
         """
         # Latent inference q(z|a,x)
-        z, q_z_mu, q_z_log_var = self.encoder(x)
+        z, (q_z_mu, q_z_sd) = self.encoder(x)
 
         # Generative p(x|z)
-        x, p_x_mu, p_x_log_var = self.decoder(z)
+        x, px_args = self.decoder(z)
 
         # KL Divergence
-        self.kl_divergence = kld_gaussian_gaussian(z, (q_z_mu, q_z_log_var))
+        self.kl_divergence = kld_gaussian_gaussian(z, (q_z_mu, q_z_sd))
 
-        return x, p_x_mu, p_x_log_var
+        return x, px_args
 
     def sample(self, z):
         """
@@ -123,6 +125,13 @@ class VariationalAutoencoder(nn.Module):
         """
         return self.decode(z)
 
+    def log_likelihood(self, x, *px_args):
+        return self.decoder.sample.log_likelihood(x, *px_args)
+
+    def elbo(self, x):
+        px, px_args = self.forward(x)
+        return self.log_likelihood(x, *px_args) - self.kl_divergence
+
 
 class DeepVariationalAutoencoder(nn.Module):
     """
@@ -132,17 +141,18 @@ class DeepVariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim):
+    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer, decoder_sample_layer):
         super().__init__()
 
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.h_dim = h_dim
 
-        dims = [x_dim, *z_dim]
+        enc_dims = [x_dim, *z_dim]
+        dec_dims = enc_dims[::-1]  # reverse
 
-        encoder_layers = [DenseSequentialCoder(x_dim=dims[i - 1], z_dim=dims[i], h_dim=h_dim) for i in range(1, len(dims))]
-        decoder_layers = [DenseSequentialCoder(x_dim=dims[i], z_dim=dims[i - 1], h_dim=h_dim) for i in range(1, len(dims))][::-1]
+        encoder_layers = [DenseSequentialCoder(x_dim=enc_dims[i - 1], z_dim=enc_dims[i], h_dim=h_dim, sample_layer=encoder_sample_layer[i - 1]) for i in range(1, len(enc_dims))]
+        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim, sample_layer=decoder_sample_layer[i - 1]) for i in range(1, len(dec_dims))]
 
         self.encoder = nn.ModuleList(encoder_layers)
         self.decoder = nn.ModuleList(decoder_layers)
@@ -162,21 +172,47 @@ class DeepVariationalAutoencoder(nn.Module):
         latents = []
         z = x
         for encoder in self.encoder:
-            z, q_z_mu, q_z_log_var = encoder(z)
-            latents.append((z, q_z_mu, q_z_log_var))
+            z, (q_z_mu, q_z_sd) = encoder(z)
+            latents.append((z, (q_z_mu, q_z_sd)))
         return latents
 
     def decode(self, latents):
+        #  x -> z1 -> z2
+        # z2 -> z1 -> x
+        
+        # x' -> z'1 = g'(x) -> z'2 = f'(z'1)
+        # z1 = f(z'2)  
+        # x = g(z'1) 
+
+        # latent[0] Z2 prior N(0, I)
+        # latent[1] Z1 prior N(mu2, logvar2)
+
         # At top, use prior for KL.
-        z, l_mu, l_log_var = latents[0]
-        self.kl_divergence = kld_gaussian_gaussian(z, (l_mu, l_log_var))
-        for i, decoder in enumerate(self.decoder, start=1):
-            # Top-down generative path
-            z, p_z_mu, p_z_log_var = decoder(z)
-            z, q_z_mu, q_z_log_var = latents[i]
-            self.kl_divergence += kld_gaussian_gaussian(z, (q_z_mu, q_z_log_var), (p_z_mu, p_z_log_var))
-        x, p_x_mu, p_x_log_var = z, p_z_mu, p_z_log_var
-        return x, p_x_mu, p_x_log_var
+        # import IPython
+        # IPython.embed()
+
+        zi_q, (q_zi_mu, q_zi_sd) = latents[-1]
+        self.kl_divergence = kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd))
+        
+        for i in range(0, len(self.decoder) - 1):
+            zi_p, pz_args = self.decoder[i](zi_q)
+            zi_q, qz_args = latents[-(i+2)]
+            self.kl_divergence += kld_gaussian_gaussian(zi_q, qz_args, pz_args)
+
+        # zi_p, (p_zi_mu, p_zi_sd) = self.decoder[0](zi_q)
+        # zi_q, (q_zi_mu, q_zi_sd) = latents[-2]
+        # self.kl_divergence += kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
+
+        x, px_args = self.decoder[-1](zi_q)
+
+        # for i, (latent, decoder) in enumerate(zip(reversed(latents[1:]), self.decoder[:-1])):
+        #     zi_q, (q_zi_mu, q_zi_sd) = latent
+        #     zi_p, (p_zi_mu, p_zi_sd) = decoder(zi_q)
+        #     self.kl_divergence += kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
+
+        # zi_q, (q_zi_mu, q_zi_log_var) = latents[0]
+        # x, px_args = self.decoder[-1](zi_q)
+        return x, px_args
 
     def forward(self, x):
         """
@@ -190,13 +226,9 @@ class DeepVariationalAutoencoder(nn.Module):
         latents = self.encode(x)
 
         # Generative p(x|z)
-        latents = list(reversed(latents))
-        x, p_x_mu, p_x_log_var = self.decode(latents)
+        x, px_args = self.decode(latents)
 
-        # # KL Divergence
-        # self.kl_divergence = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
-
-        return x, p_x_mu, p_x_log_var
+        return x, px_args
 
     def sample(self, z):
         """
@@ -207,6 +239,9 @@ class DeepVariationalAutoencoder(nn.Module):
         """
         #TODO This should be different from decoder
         return self.decode(z)
+    
+    def log_likelihood(self, x, *px_args):
+        return self.decoder[-1].sample.log_likelihood(x, *px_args)
 
 
 class AuxilliaryVariationalAutoencoder(nn.Module):
@@ -242,14 +277,14 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
                     m.bias.data.zero_()
 
     def encode(self, x):
-        q_a, q_a_mu, q_a_log_var = self.aux_encoder(x)
-        q_z, q_z_mu, q_z_log_var = self.encoder(torch.cat([x, q_a], dim=1))
-        return (q_z, q_z_mu, q_z_log_var), (q_a, q_a_mu, q_a_log_var)
+        q_a, q_a_mu, q_a_sd = self.aux_encoder(x)
+        q_z, q_z_mu, q_z_sd = self.encoder(torch.cat([x, q_a], dim=1))
+        return (q_z, q_z_mu, q_z_sd), (q_a, q_a_mu, q_a_sd)
 
     def decode(self, z):
-        p_x, p_x_mu, p_x_log_var = self.decoder(q_z)
-        p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
-        return (p_x, p_x_mu, p_x_log_var), (p_a, p_a_mu, p_a_log_var)
+        p_x, p_x_mu, p_x_sd = self.decoder(q_z)
+        p_a, p_a_mu, p_a_sd = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
+        return (p_x, p_x_mu, p_x_sd), (p_a, p_a_mu, p_a_sd)
 
     def forward(self, x):
         """
@@ -259,25 +294,28 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         :return: reconstruction
         """
         # Auxiliary inference q(a|x)
-        q_a, q_a_mu, q_a_log_var = self.aux_encoder(x)
+        q_a, q_a_mu, q_a_sd = self.aux_encoder(x)
 
         # Latent inference q(z|a,x)
-        q_z, q_z_mu, q_z_log_var = self.encoder(torch.cat([x, q_a], dim=1))
+        q_z, q_z_mu, q_z_sd = self.encoder(torch.cat([x, q_a], dim=1))
 
         # Generative p(x|z)
-        p_x, p_x_mu, p_x_log_var = self.decoder(q_z)
+        p_x, p_x_mu, p_x_sd = self.decoder(q_z)
 
         # Generative p(a|z,x)
-        p_a, p_a_mu, p_a_log_var = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
+        p_a, p_a_mu, p_a_sd = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
 
-        a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_log_var), (p_a_mu, p_a_log_var))
-        z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_log_var))
+        a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_sd), (p_a_mu, p_a_sd))
+        z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_sd))
         self.kl_divergence = a_kl + z_kl
 
-        return p_x, p_x_mu, p_x_log_var
+        return p_x, p_x_mu, p_x_sd
     
     def sample(self, z):
         return self.decode(z)
+    
+    def log_likelihood(self, x, px_args):
+        return self.decoder.sample.log_likelihood(x, px_args)
 
 
 class LadderEncoder(nn.Module):
@@ -325,22 +363,22 @@ class LadderDecoder(nn.Module):
         self.batchnorm2 = nn.BatchNorm1d(h_dim)
         self.sample = GaussianSample(h_dim, self.z_dim)
 
-    def forward(self, x, l_mu=None, l_log_var=None):
+    def forward(self, x, l_mu=None, l_sd=None):
         if l_mu is not None:
             # Sample from this encoder layer and merge
             z = self.linear1(x)
             z = F.tanh(self.batchnorm1(z))
-            q_z, q_mu, q_log_var = self.merge(z, l_mu, l_log_var)
+            q_z, q_mu, q_sd = self.merge(z, l_mu, l_sd)
 
         # Sample from the decoder and send forward
         z = self.linear2(x)
         z = F.tanh(self.batchnorm2(z))
-        z, p_mu, p_log_var = self.sample(z)
+        z, p_mu, p_sd = self.sample(z)
 
         if l_mu is None:
             return z
 
-        return z, (q_z, (q_mu, q_log_var), (p_mu, p_log_var))
+        return z, (q_z, (q_mu, q_sd), (p_mu, p_sd))
 
 
 class LadderVariationalAutoencoder(nn.Module):
@@ -373,37 +411,40 @@ class LadderVariationalAutoencoder(nn.Module):
     def encode(self, x):
         latents = []
         for encoder in self.encoder:
-            x, (z, z_mu, z_log_var) = encoder(x)
-            latents.append((z, z_mu, z_log_var))
+            x, (z, z_mu, z_sd) = encoder(x)
+            latents.append((z, z_mu, z_sd))
         return latents
 
     def decode(self, latents):
         self.kl_divergence = 0
         for i, decoder in enumerate([None, *self.decoder]):
-            _, l_mu, l_log_var = latents[i]
+            _, l_mu, l_sd = latents[i]
             if i == 0:
                 # If at top, encoder == decoder, use prior for KL.
                 z = latents[i][0]
-                self.kl_divergence += kld_gaussian_gaussian(z, (l_mu, l_log_var))
+                self.kl_divergence += kld_gaussian_gaussian(z, (l_mu, l_sd))
             else:
                 # Perform downward merge of information.
-                z, kl = decoder(z, l_mu, l_log_var)
+                z, kl = decoder(z, l_mu, l_sd)
                 self.kl_divergence += kld_gaussian_gaussian(*kl)
 
-        p_x, p_x_mu, p_x_log_var = self.reconstruction(z)
-        return p_x, p_x_mu, p_x_log_var
+        p_x, p_x_mu, p_x_sd = self.reconstruction(z)
+        return p_x, p_x_mu, p_x_sd
 
     def forward(self, x):
         # Gather latent representation from encoders along with final z.
         latents = self.encode(x)
         latents = list(reversed(latents))
-        p_x, p_x_mu, p_x_log_var = self.decode(latents)
-        return p_x, p_x_mu, p_x_log_var
+        p_x, p_x_mu, p_x_sd = self.decode(latents)
+        return p_x, p_x_mu, p_x_sd
 
     def sample(self, z):
         for decoder in self.decoder:
             z = decoder(z)
         return self.reconstruction(z)
+    
+    def log_likelihood(self, x, px_args):
+        return self.decoder.sample.log_likelihood(x, px_args)
 
 
 # NOTE First go at implementing variable number of hidden layers between stochastic variables

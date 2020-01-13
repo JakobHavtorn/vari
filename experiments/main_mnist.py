@@ -3,6 +3,7 @@ import logging
 import torch
 import pickle
 
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from pprint import pprint
 
@@ -11,10 +12,9 @@ from model_utils.experiment import Experiment
 import vari.models.vae
 
 from vari.datasets import MNIST
+from vari.models import get_default_model_config
 from vari.utilities import get_device, log_sum_exp
 from vari.inference import log_gaussian, DeterministicWarmup
-
-import torchvision.transforms
 
 import IPython
 
@@ -29,15 +29,11 @@ def default_configuration():
     dataset_name = 'MNIST'
     exclude_labels = [4]
     dataset_kwargs = dict(
-        split='join',
+        split='train',
         exclude_labels=exclude_labels,
-        # transform=torchvision.transforms.Compose([
-        #     torchvision.transforms.Normalize(0, 255, inplace=False),
-        #     torchvision.transforms.Lambda(lambda x: x.flatten())
-        # ])
     )
 
-    n_epochs = 300
+    n_epochs = 200
     batch_size = 32
     importance_samples = 10
     learning_rate = 3e-4
@@ -49,43 +45,14 @@ def default_configuration():
     # vae_type = 'DeepVariationalAutoencoder'
     # vae_type = 'AuxilliaryVariationalAutoencoder'
     # vae_type = 'LadderVariationalAutoencoder'
-    vae_kwargs = get_vae_kwargs(vae_type)
+    # vae_kwargs = get_vae_kwargs(vae_type)
 
     device = get_device()
     seed = 0
-
-
-def get_vae_kwargs(vae_type):
-    if vae_type == 'VariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=784,
-            z_dim=2,
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'DeepVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=784,
-            z_dim=[2, 2],
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'AuxilliaryVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=784,
-            z_dim=2,
-            a_dim=2,
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'LadderVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=784,
-            z_dim=[2, 2],
-            h_dim=[64, 64]
-        )
-    return vae_kwargs
     
 
 @ex.automain
-def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
+def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, learning_rate, importance_samples,
         warmup_epochs, seed):
 
     # Print config, set threads and seed
@@ -99,10 +66,15 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
     train_dataset = getattr(vari.datasets, dataset_name)
     train_dataset = train_dataset(**dataset_kwargs)
     print(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
-    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=2, pin_memory=device == 'cuda')
+
+    model_kwargs = get_default_model_config(vae_type, dataset_name)
     model = getattr(vari.models.vae, vae_type)
-    model = model(**vae_kwargs)
+    model = model(
+        x_dim=np.prod(train_dataset[0][0].shape),
+        **model_kwargs
+    )
     model.to(device)
     print(model)
 
@@ -118,7 +90,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
             model.train()
             total_elbo, total_kl, total_likelihood = 0, 0, 0
             beta = next(deterministic_warmup)
-            for b, (x, _) in enumerate(train_loader):
+            for b, (x, _) in tqdm(enumerate(train_loader), leave=False, total=len(train_loader), smoothing=0):
                 x = x.to(device)
 
                 optimizer.zero_grad()
@@ -126,11 +98,11 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
                 # Importance sampling
                 x_iw = x.view(x.shape[0], np.prod(x.shape[1:]))
                 x_iw = x_iw.repeat(1, importance_samples).view(-1, x_iw.shape[1])
-                
-                px, px_mu, px_sigma = model(x_iw)
-                kl_divergence = model.kl_divergence
 
-                likelihood = log_gaussian(x_iw, px_mu, px_sigma)
+                x, px_args = model(x_iw)
+                kl_divergence = model.kl_divergence
+                likelihood = model.log_likelihood(x_iw, *px_args)
+
                 elbo = likelihood - beta * kl_divergence
 
                 # Importance sampling

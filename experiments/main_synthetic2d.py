@@ -11,6 +11,7 @@ from model_utils.experiment import Experiment
 import vari.models.vae
 
 from vari.datasets import Spirals, Moons
+from vari.models import get_default_model_config
 from vari.utilities import get_device, log_sum_exp
 from vari.inference import log_gaussian, DeterministicWarmup
 
@@ -37,48 +38,17 @@ def default_configuration():
     warmup_epochs = 0
 
     # VariationalAutoencoder, LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    # TODO VariationalAutoencoder should support multiple stochastic layers instead of separate DeepVariationalAutoencoder class
-    vae_type = 'VariationalAutoencoder'
+    vae_type = 'DeepVariationalAutoencoder'
     # vae_type = 'DeepVariationalAutoencoder'
     # vae_type = 'AuxilliaryVariationalAutoencoder'
     # vae_type = 'LadderVariationalAutoencoder'
-    vae_kwargs = get_vae_kwargs(vae_type)
 
     device = get_device()
     seed = 0
-
-
-def get_vae_kwargs(vae_type):
-    if vae_type == 'VariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=2,
-            z_dim=2,
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'DeepVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=2,
-            z_dim=[2, 2],
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'AuxilliaryVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=2,
-            z_dim=2,
-            a_dim=2,
-            h_dim=[64, 64]
-        )
-    elif vae_type == 'LadderVariationalAutoencoder':
-        vae_kwargs = dict(
-            x_dim=2,
-            z_dim=[2, 2],
-            h_dim=[64, 64]
-        )
-    return vae_kwargs
     
 
 @ex.automain
-def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
+def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, learning_rate, importance_samples,
         warmup_epochs, seed):
 
     # Print config, set threads and seed
@@ -94,8 +64,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
     
+    model_kwargs = get_default_model_config(vae_type, dataset_name)
     model = getattr(vari.models.vae, vae_type)
-    model = model(**vae_kwargs)
+    model = model(**model_kwargs)
     model.to(device)
     print(model)
 
@@ -115,14 +86,14 @@ def run(device, dataset_name, dataset_kwargs, vae_type, vae_kwargs, n_epochs, ba
                 x = x.to(device)
 
                 optimizer.zero_grad()
-                
+
                 # Importance sampling
                 x_iw = x.repeat(1, importance_samples).view(-1, x.shape[1])
-                
-                px, px_mu, px_sigma = model(x_iw)
-                kl_divergence = model.kl_divergence
 
-                likelihood = log_gaussian(x_iw, px_mu, px_sigma)
+                px, (px_mu, px_sigma) = model(x_iw)
+                kl_divergence = model.kl_divergence
+                likelihood = model.log_likelihood(x_iw, *(px_mu, px_sigma))
+
                 elbo = likelihood - beta * kl_divergence
 
                 # Importance sampling

@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from vari.utilities import get_device
+from vari.inference.distributions import log_gaussian, log_bernoulli, log_continuous_bernoulli
 
 
 class IdentityLayer(nn.Module):
@@ -20,21 +21,16 @@ class Stochastic(nn.Module):
     Base stochastic layer that uses the
     reparametrization trick [Kingma 2013]
     to draw a sample from a distribution
-    parametrised by mu and log_var.
+    parametrised by mu and sd.
     """
-    def reparametrize(self, mu, log_var):
-        epsilon = torch.randn(mu.size(), requires_grad=False, device=get_device())
+    def reparametrize(self, mu, sd):
+        epsilon = torch.randn_like(mu, requires_grad=False, device=get_device())
+        # # log_std = 0.5 * log_var
+        # # std = exp(log_std)
+        # std = log_var.mul(0.5).exp_()
 
-        if mu.is_cuda:
-            epsilon = epsilon.cuda()
-
-        # log_std = 0.5 * log_var
-        # std = exp(log_std)
-        std = log_var.mul(0.5).exp_()
-
-        # z = std * epsilon + mu
-        z = mu.addcmul(std, epsilon)
-
+        # # z = std * epsilon + mu
+        z = mu.addcmul(sd, epsilon)
         return z
 
 
@@ -43,19 +39,73 @@ class GaussianSample(Stochastic):
     Layer that represents a sample from a
     Gaussian distribution.
     """
+    def __init__(self, in_features, out_features, scale_as='std'):
+        super().__init__()
+        assert scale_as in ['std', 'log_var']
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.mu = nn.Linear(in_features, out_features)
+        scale = [nn.Linear(in_features, out_features)]
+        if scale_as == 'std':
+            scale.append(nn.Softplus())
+        self.scale = nn.Sequential(*scale)
+
+    def forward(self, x):
+        mu = self.mu(x)
+        scale = self.scale(x)
+        return self.reparametrize(mu, scale), (mu, scale)
+
+    def log_likelihood(self, x, mu, sd):
+        return log_gaussian(x, mu, sd)
+
+    
+class BernoulliSample(Stochastic):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
 
-        self.mu = nn.Linear(in_features, out_features)
-        self.log_var = nn.Linear(in_features, out_features)
+        self.p = nn.Linear(in_features, out_features)
+        self.activation = nn.Sigmoid()
+        
+    def reparametrize(p):
+        bernoulli = torch.distributions.bernoulli.Bernoulli(probs=p)
+        return bernoulli.sample(sample_shape=p.shape)
 
     def forward(self, x):
-        mu = self.mu(x)
-        log_var = self.log_var(x)
+        p = self.activation(self.p.forward(x))
+        return p, (p,)
 
-        return self.reparametrize(mu, log_var), mu, log_var
+    def log_likelihood(self, x, p):
+        return log_bernoulli(x, p)
+    
+    
+class ContinuousBernoulliSample(Stochastic):
+    def __init__(self, in_features, out_features):
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.p = nn.ModuleList([
+            nn.Linear(in_features, out_features),
+            nn.Sigmoid()
+        ])
+
+    def reparametrize(self, p):
+        u = torch.rand_like(p, requires_grad=False, device=get_device())
+        # For p != 0.5
+        (torch.log(u * (2 * p - 1) + 1 - p) - torch.log(1 - p)) / (torch.log(p) - torch.log(1 - p))
+        # For p == 0.5
+        u
+        return z
+        
+    def forward(self, x):
+        p = self.p(x)
+        return p
+    
+    def log_likelihood(self, x, p):
+        return log_continuous_bernoulli(x, p)
+        
 
 
 class GaussianMerge(GaussianSample):
@@ -70,6 +120,7 @@ class GaussianMerge(GaussianSample):
         super().__init__(in_features, out_features)
 
     def forward(self, z, mu1, log_var1):
+        raise NotImplementedError('Not yet adapted to GaussianSample layer using Softplus to return standard deviation')
         # Calculate precision of each distribution
         # (inverse variance)
         mu2 = self.mu(z)
@@ -84,7 +135,7 @@ class GaussianMerge(GaussianSample):
         var = 1 / (precision1 + precision2)
         log_var = torch.log(var + 1e-8)
 
-        return self.reparametrize(mu, log_var), mu, log_var
+        return self.reparametrize(mu, log_var), (mu, log_var)
 
 
 class GumbelSoftmax(Stochastic):
