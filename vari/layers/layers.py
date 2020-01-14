@@ -1,3 +1,5 @@
+import inspect
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,12 +10,24 @@ from vari.utilities import get_device
 from vari.inference.distributions import log_gaussian, log_bernoulli, log_continuous_bernoulli
 
 
-class IdentityLayer(nn.Module):
+class Identity(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         
     def forward(self, x):
         return x
+
+
+class Lambda(nn.Module):
+    def __init__(self, lambd):
+        super().__init__()
+        self.lambd = lambd
+
+    def forward(self, x):
+        return self.lambd(x)
+    
+    # def __repr__(self):
+    #     return inspect.getsourcelines(self.lambd)[0][0].replace('\n', '')
 
 
 class Stochastic(nn.Module):
@@ -44,11 +58,13 @@ class GaussianSample(Stochastic):
         assert scale_as in ['std', 'log_var']
         self.in_features = in_features
         self.out_features = out_features
+        self.scale_as = scale_as
 
         self.mu = nn.Linear(in_features, out_features)
         scale = [nn.Linear(in_features, out_features)]
         if scale_as == 'std':
             scale.append(nn.Softplus())
+            scale.append(Lambda(lambda x: x + 0.1))  
         self.scale = nn.Sequential(*scale)
 
     def forward(self, x):
@@ -69,7 +85,7 @@ class BernoulliSample(Stochastic):
         self.p = nn.Linear(in_features, out_features)
         self.activation = nn.Sigmoid()
         
-    def reparametrize(p):
+    def reparametrize(self, p):
         bernoulli = torch.distributions.bernoulli.Bernoulli(probs=p)
         return bernoulli.sample(sample_shape=p.shape)
 

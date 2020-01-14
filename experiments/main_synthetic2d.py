@@ -86,6 +86,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 x = x.to(device)
 
                 optimizer.zero_grad()
+                
+                import IPython
+                IPython.embed()
 
                 # Importance sampling
                 x_iw = x.repeat(1, importance_samples).view(-1, x.shape[1])

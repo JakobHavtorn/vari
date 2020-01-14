@@ -1,3 +1,3 @@
 from .spirals import Spirals
 from .moons import Moons
-from .mnist import MNIST
+from .mnist import MNISTInterpolate, MNISTBinarized, MNISTBinarizedLarochelle

@@ -139,3 +139,6 @@ dmypy.json
 
 # Pickle files
 *.pkl
+
+# Data download directory
+torch_data/*

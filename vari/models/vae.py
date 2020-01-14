@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn import init
 
-from vari.layers import IdentityLayer, GaussianSample, BernoulliSample, GaussianMerge, GumbelSoftmax
+from vari.layers import Identity, GaussianSample, BernoulliSample, GaussianMerge, GumbelSoftmax
 from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
 
@@ -71,15 +71,22 @@ class VariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer=GaussianSample, decoder_sample_layer=GaussianSample):
+    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer=GaussianSample, decoder_sample_layer=GaussianSample, activation=nn.Tanh, encoder=None, decoder=None):
         super().__init__()
 
         self.x_dim = x_dim  # if isinstance(x_dim, int) else np.prod(x_dim)  # The dim or flatten
         self.z_dim = z_dim
         self.h_dim = h_dim
 
-        self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer)
-        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer)
+        if encoder is not None:
+            self.encoder = encoder
+        else:
+            self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer, activation=activation)
+        if decoder is not None:
+            self.decoder = decoder
+        else:
+            self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer, activation=activation)
+        self.kl_divergences = [0]
         self.kl_divergence = 0
         self.initialize()
 
@@ -113,6 +120,7 @@ class VariationalAutoencoder(nn.Module):
 
         # KL Divergence
         self.kl_divergence = kld_gaussian_gaussian(z, pz_args)
+        self.kl_divergences[0] = self.kl_divergence
 
         return x, px_args
 
@@ -141,7 +149,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer, decoder_sample_layer):
+    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer, decoder_sample_layer, activation=nn.Tanh):
         super().__init__()
 
         self.x_dim = x_dim
@@ -151,12 +159,15 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         enc_dims = [x_dim, *z_dim]
         dec_dims = enc_dims[::-1]  # reverse
 
-        encoder_layers = [DenseSequentialCoder(x_dim=enc_dims[i - 1], z_dim=enc_dims[i], h_dim=h_dim, sample_layer=encoder_sample_layer[i - 1]) for i in range(1, len(enc_dims))]
-        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim, sample_layer=decoder_sample_layer[i - 1]) for i in range(1, len(dec_dims))]
+        encoder_layers = [DenseSequentialCoder(x_dim=enc_dims[i - 1], z_dim=enc_dims[i], h_dim=h_dim[i - 1],
+                                               sample_layer=encoder_sample_layer[i - 1], activation=activation) for i in range(1, len(enc_dims))]
+        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim[i - 1],
+                                               sample_layer=decoder_sample_layer[i - 1], activation=activation) for i in range(1, len(dec_dims))]
 
         self.encoder = nn.ModuleList(encoder_layers)
         self.decoder = nn.ModuleList(decoder_layers)
 
+        self.kl_divergences = [0] * len(z_dim)
         self.kl_divergence = 0
         self.initialize()
 
@@ -195,12 +206,14 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         # IPython.embed()
 
         zi_q, (q_zi_mu, q_zi_sd) = latents[-1]
-        self.kl_divergence = kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd))
+        self.kl_divergences[0] = kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd))
+        self.kl_divergence = self.kl_divergences[0]
         
         for i in range(0, len(self.decoder) - 1):
             zi_p, pz_args = self.decoder[i](zi_q)
             zi_q, qz_args = latents[-(i+2)]
-            self.kl_divergence += kld_gaussian_gaussian(zi_q, qz_args, pz_args)
+            self.kl_divergences[i + 1] = kld_gaussian_gaussian(zi_q, qz_args, pz_args)
+            self.kl_divergence += self.kl_divergences[i + 1]
 
         # zi_p, (p_zi_mu, p_zi_sd) = self.decoder[0](zi_q)
         # zi_q, (q_zi_mu, q_zi_sd) = latents[-2]
@@ -241,14 +254,16 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         :return: (torch.autograd.Variable) generated sample
         """
         #TODO This should be different from decoder
-        return self.decode(z)
+        for decoder in self.decoder:
+            z, qz_args = decoder(z)
+        return z, qz_args
     
     def log_likelihood(self, x, *px_args):
         return self.decoder[-1].sample.log_likelihood(x, *px_args)
 
 
 class AuxilliaryVariationalAutoencoder(nn.Module):
-    def __init__(self, x_dim, z_dim, h_dim, a_dim, encoder_sample_layer, decoder_sample_layer):
+    def __init__(self, x_dim, z_dim, h_dim, a_dim, encoder_sample_layer=GaussianSample, decoder_sample_layer=GaussianSample, activation=nn.Tanh):
         """
         Auxiliary Deep Generative Models [Maaløe 2016]
         code replication. The ADGM introduces an additional
@@ -264,11 +279,14 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         self.a_dim = a_dim
         self.h_dim = h_dim
 
-        self.aux_encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=a_dim, h_dim=h_dim)
-        self.aux_decoder = DenseSequentialCoder(x_dim=x_dim + z_dim, z_dim=a_dim, h_dim=list(reversed(h_dim)))
+        self.aux_encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=a_dim, h_dim=h_dim, activation=activation)
+        self.aux_decoder = DenseSequentialCoder(x_dim=x_dim + z_dim, z_dim=a_dim, h_dim=list(reversed(h_dim)), activation=activation)
 
-        self.encoder = DenseSequentialCoder(x_dim=a_dim + x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer)
-        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer)
+        self.encoder = DenseSequentialCoder(x_dim=a_dim + x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer, activation=activation)
+        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer, activation=activation)
+        
+        self.kl_divergence = 0
+        self.kl_divergences = [0] * 2
         self.initialize()
 
     def initialize(self):
@@ -285,7 +303,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         return (q_z, (q_z_mu, q_z_sd)), (q_a, (q_a_mu, q_a_sd))
 
     def decode(self, z):
-        p_x, (p_x_mu, p_x_sd) = self.decoder(q_z)
+        p_x, (p_x_mu, p_x_sd) = self.decoder(z)
         p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
         return (p_x, (p_x_mu, p_x_sd)), (p_a, (p_a_mu, p_a_sd))
 
@@ -310,6 +328,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
 
         a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_sd), (p_a_mu, p_a_sd))
         z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_sd))
+        self.kl_divergences[0], self.kl_divergences[1] = z_kl, a_kl
         self.kl_divergence = a_kl + z_kl
 
         return p_x, (p_x_mu, p_x_sd)

@@ -51,7 +51,7 @@ def log_bernoulli(x, p, eps=1e-8):
     :param p: mean of distribution
     :return: log B(x|p)
     """
-    log_pdf = (p + eps).log() * x + (1-p+eps).log() * (1-x)
+    log_pdf = (p + eps).log() * x + (1 - p + eps).log() * (1 - x)
     # bernoulli = torch.distributions.bernoulli.Bernoulli(probs=p)
     # bernoulli.log_prob(x)
     return torch.sum(log_pdf, dim=-1)

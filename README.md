@@ -7,4 +7,3 @@
   
   This allows using `.sample()`, `.log_prob()` and `torch.distributions.kl.kl_divergence()` methods instead of implementing from scratch.
   It also makes the API of the encoder and decoder the same despite the encoding/decoding distribution.
-
