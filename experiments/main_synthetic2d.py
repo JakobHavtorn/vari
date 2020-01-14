@@ -31,15 +31,15 @@ def default_configuration():
         noise=0.0
     )
 
-    n_epochs = 300
-    batch_size = 32
+    n_epochs = 1000
+    batch_size = 256
     importance_samples = 10
     learning_rate = 3e-4
     warmup_epochs = 0
 
     # VariationalAutoencoder, LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    vae_type = 'DeepVariationalAutoencoder'
-    # vae_type = 'DeepVariationalAutoencoder'
+    vae_type = 'HierarchicalVariationalAutoencoder'
+    # vae_type = 'HierarchicalVariationalAutoencoder'
     # vae_type = 'AuxilliaryVariationalAutoencoder'
     # vae_type = 'LadderVariationalAutoencoder'
 
@@ -110,10 +110,10 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 total_log_px += likelihood.mean().item()
                 total_kl += kl_divergence.mean().item()
 
-                ex.log_scalar(f'(batch) ELBO log p(x)', total_elbo / (b + 1), step=i_update)
-                ex.log_scalar(f'(batch) log p(x|z)', total_log_px / (b + 1), step=i_update)
-                ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', total_kl / (b + 1), step=i_update)
-                ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * total_kl / (b + 1), step=i_update)
+                ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
+                ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
+                ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
+                ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
                 i_update += 1
                 
             total_elbo = total_elbo / len(train_loader)

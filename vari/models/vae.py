@@ -106,13 +106,13 @@ class VariationalAutoencoder(nn.Module):
         :return: reconstructed input
         """
         # Latent inference q(z|a,x)
-        z, (q_z_mu, q_z_sd) = self.encoder(x)
+        z, pz_args = self.encoder(x)
 
         # Generative p(x|z)
         x, px_args = self.decoder(z)
 
         # KL Divergence
-        self.kl_divergence = kld_gaussian_gaussian(z, (q_z_mu, q_z_sd))
+        self.kl_divergence = kld_gaussian_gaussian(z, pz_args)
 
         return x, px_args
 
@@ -133,7 +133,7 @@ class VariationalAutoencoder(nn.Module):
         return self.log_likelihood(x, *px_args) - self.kl_divergence
 
 
-class DeepVariationalAutoencoder(nn.Module):
+class HierarchicalVariationalAutoencoder(nn.Module):
     """
     Variational Autoencoder [Kingma 2013] model
     consisting of an encoder/decoder pair for which
@@ -169,6 +169,9 @@ class DeepVariationalAutoencoder(nn.Module):
                     m.bias.data.zero_()
 
     def encode(self, x):
+        """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
+        NOTE Improvement: List or OrderedDict of torch.distributions and then we can sample from this later.
+        """
         latents = []
         z = x
         for encoder in self.encoder:
@@ -245,7 +248,7 @@ class DeepVariationalAutoencoder(nn.Module):
 
 
 class AuxilliaryVariationalAutoencoder(nn.Module):
-    def __init__(self, x_dim, z_dim, h_dim, a_dim=3):
+    def __init__(self, x_dim, z_dim, h_dim, a_dim, encoder_sample_layer, decoder_sample_layer):
         """
         Auxiliary Deep Generative Models [Maaløe 2016]
         code replication. The ADGM introduces an additional
@@ -264,8 +267,8 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         self.aux_encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=a_dim, h_dim=h_dim)
         self.aux_decoder = DenseSequentialCoder(x_dim=x_dim + z_dim, z_dim=a_dim, h_dim=list(reversed(h_dim)))
 
-        self.encoder = DenseSequentialCoder(x_dim=a_dim + x_dim, z_dim=z_dim, h_dim=h_dim)
-        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)))
+        self.encoder = DenseSequentialCoder(x_dim=a_dim + x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer)
+        self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer)
         self.initialize()
 
     def initialize(self):
@@ -277,14 +280,14 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
                     m.bias.data.zero_()
 
     def encode(self, x):
-        q_a, q_a_mu, q_a_sd = self.aux_encoder(x)
-        q_z, q_z_mu, q_z_sd = self.encoder(torch.cat([x, q_a], dim=1))
-        return (q_z, q_z_mu, q_z_sd), (q_a, q_a_mu, q_a_sd)
+        q_a, (q_a_mu, q_a_sd) = self.aux_encoder(x)
+        q_z, (q_z_mu, q_z_sd) = self.encoder(torch.cat([x, q_a], dim=1))
+        return (q_z, (q_z_mu, q_z_sd)), (q_a, (q_a_mu, q_a_sd))
 
     def decode(self, z):
-        p_x, p_x_mu, p_x_sd = self.decoder(q_z)
-        p_a, p_a_mu, p_a_sd = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
-        return (p_x, p_x_mu, p_x_sd), (p_a, p_a_mu, p_a_sd)
+        p_x, (p_x_mu, p_x_sd) = self.decoder(q_z)
+        p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
+        return (p_x, (p_x_mu, p_x_sd)), (p_a, (p_a_mu, p_a_sd))
 
     def forward(self, x):
         """
@@ -294,28 +297,28 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         :return: reconstruction
         """
         # Auxiliary inference q(a|x)
-        q_a, q_a_mu, q_a_sd = self.aux_encoder(x)
+        q_a, (q_a_mu, q_a_sd) = self.aux_encoder(x)
 
         # Latent inference q(z|a,x)
-        q_z, q_z_mu, q_z_sd = self.encoder(torch.cat([x, q_a], dim=1))
+        q_z, (q_z_mu, q_z_sd) = self.encoder(torch.cat([x, q_a], dim=1))
 
         # Generative p(x|z)
-        p_x, p_x_mu, p_x_sd = self.decoder(q_z)
+        p_x, (p_x_mu, p_x_sd) = self.decoder(q_z)
 
         # Generative p(a|z,x)
-        p_a, p_a_mu, p_a_sd = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
+        p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
 
         a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_sd), (p_a_mu, p_a_sd))
         z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_sd))
         self.kl_divergence = a_kl + z_kl
 
-        return p_x, p_x_mu, p_x_sd
+        return p_x, (p_x_mu, p_x_sd)
     
     def sample(self, z):
         return self.decode(z)
     
-    def log_likelihood(self, x, px_args):
-        return self.decoder.sample.log_likelihood(x, px_args)
+    def log_likelihood(self, x, *px_args):
+        return self.decoder.sample.log_likelihood(x, *px_args)
 
 
 class LadderEncoder(nn.Module):
