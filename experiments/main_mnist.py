@@ -30,15 +30,16 @@ def default_configuration():
     tag = 'ood-detection'
 
     dataset_name = 'MNISTBinarized'
-    exclude_labels = [4]
+    exclude_labels = []
+    preprocess='dynamic'
     dataset_kwargs = dict(
         split='train',
-        preprocess='dynamic',
+        preprocess=preprocess,
         exclude_labels=exclude_labels,
     )
 
-    n_epochs = 200
-    batch_size = 32
+    n_epochs = 1000
+    batch_size = 256
     importance_samples = 10
     learning_rate = 3e-4
     warmup_epochs = 0
@@ -146,7 +147,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
             ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
             ex.log_scalar(f'ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
             for i, kl in total_kls.items():
-                ex.log_scalar(f'KL on z{i})', kl / len(train_loader), step=epoch)
+                ex.log_scalar(f'KL on z_{i}', kl / len(train_loader), step=epoch)
 
             print(f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}')
 

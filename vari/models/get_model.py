@@ -6,7 +6,7 @@ from vari.layers import GaussianSample, BernoulliSample, ContinuousBernoulliSamp
 
 
 def get_default_model_config(vae_type, dataset):
-    if dataset in ['MNIST', 'MNISTBinarized']:
+    if dataset in ['MNISTBinarized', 'FashionMNISTBinarized']:
         kwargs = get_default_model_config_mnist(vae_type)
     elif dataset in ['Moons', 'Spirals']:
         kwargs = get_default_model_config_synthetic_2d(vae_type)
