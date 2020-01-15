@@ -333,7 +333,11 @@ class FashionMNISTInterpolate(Dataset):
         self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
         
     def __getitem__(self, idx):
-        return MNISTInterpolate.__getitem__(idx)
+        example = self.examples[idx].astype(np.float32)
+        if self.dynamic_preprocessing:
+            example = self.preprocess(example)
+            example = self.warp_pixels(example, self.gamma)
+        return example, self.labels[idx].astype(np.float32)
 
     @staticmethod
     def filter(examples, labels, exclude_labels):
@@ -348,7 +352,7 @@ class FashionMNISTInterpolate(Dataset):
         return MNISTInterpolate.warp_pixels(examples, gamma)
 
     def __len__(self):
-        return MNISTInterpolate.__len__()
+        return len(self.examples.shape[0])
     
     def __repr__(self):
         s = f'FashionMNISTInterpolate('
@@ -423,15 +427,7 @@ class FashionMNISTBinarized(Dataset):
 
     @staticmethod
     def preprocess(examples):
-        """Standard preprocessing of MNIST.
-
-        Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
-        This results in values in [0, 1].
-        """
-        examples = examples.astype(np.float64)
-        examples /= 255  # /= examples.max()
-        examples = np.random.binomial(1, examples)  # Binary sampling with normalized pixel values as probabilities
-        return examples
+        return MNISTBinarized.preprocess(examples)
 
     def __len__(self):
         return self.examples.shape[0]

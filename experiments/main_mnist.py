@@ -31,7 +31,7 @@ def default_configuration():
 
     dataset_name = 'MNISTBinarized'
     exclude_labels = []
-    preprocess='dynamic'
+    preprocess = 'dynamic'
     dataset_kwargs = dict(
         split='train',
         preprocess=preprocess,
@@ -54,7 +54,7 @@ def default_configuration():
 
     device = get_device()
     seed = 0
-    
+
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, learning_rate, importance_samples,
@@ -162,7 +162,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             
             epoch += 1
+
     except KeyboardInterrupt:
         print('Interrupted experiment')
+        return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
 
     return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
