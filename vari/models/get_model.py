@@ -25,7 +25,7 @@ def get_default_model_config_mnist(vae_type):
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(
-            z_dim=[2, 2],
+            z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
             encoder_sample_layer=[GaussianSample, GaussianSample],
             decoder_sample_layer=[GaussianSample, BernoulliSample],

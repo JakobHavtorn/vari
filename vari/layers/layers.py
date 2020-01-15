@@ -64,7 +64,7 @@ class GaussianSample(Stochastic):
         scale = [nn.Linear(in_features, out_features)]
         if scale_as == 'std':
             scale.append(nn.Softplus())
-            scale.append(Lambda(lambda x: x + 0.1))  
+            scale.append(Lambda(lambda x: x + 1e-8))  
         self.scale = nn.Sequential(*scale)
 
     def forward(self, x):
