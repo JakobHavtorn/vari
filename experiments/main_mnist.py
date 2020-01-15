@@ -151,14 +151,14 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
 
             print(f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}')
 
-            px, px_args = model.sample(p_z_samples)
-            px_args = [v.cpu().detach().numpy() for v in px_args]
-            np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px_args)
             if epoch % 10 == 0 and total_elbo > best_elbo and deterministic_warmup.is_done:
                 best_elbo = total_elbo
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
+                px, px_args = model.sample(p_z_samples)
+                px_args = [v.cpu().detach().numpy() for v in px_args]
+                np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px_args)
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             
             epoch += 1
