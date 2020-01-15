@@ -303,9 +303,9 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         return (q_z, (q_z_mu, q_z_sd)), (q_a, (q_a_mu, q_a_sd))
 
     def decode(self, z):
-        p_x, (p_x_mu, p_x_sd) = self.decoder(z)
-        p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
-        return (p_x, (p_x_mu, p_x_sd)), (p_a, (p_a_mu, p_a_sd))
+        p_x, px_args = self.decoder(z)
+        # p_a, pa_args = self.aux_decoder(torch.cat([p_x, z], dim=1))
+        return (p_x, px_args)
 
     def forward(self, x):
         """
@@ -321,7 +321,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         q_z, (q_z_mu, q_z_sd) = self.encoder(torch.cat([x, q_a], dim=1))
 
         # Generative p(x|z)
-        p_x, (p_x_mu, p_x_sd) = self.decoder(q_z)
+        p_x, px_args = self.decoder(q_z)
 
         # Generative p(a|z,x)
         p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
@@ -331,7 +331,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         self.kl_divergences[0], self.kl_divergences[1] = z_kl, a_kl
         self.kl_divergence = a_kl + z_kl
 
-        return p_x, (p_x_mu, p_x_sd)
+        return p_x, px_args
     
     def sample(self, z):
         return self.decode(z)

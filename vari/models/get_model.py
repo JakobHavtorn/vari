@@ -21,7 +21,7 @@ def get_default_model_config_mnist(vae_type):
             h_dim=[512, 512],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=BernoulliSample,
-            activation=nn.LeakyReLU
+            activation=nn.Tanh
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(
@@ -38,7 +38,7 @@ def get_default_model_config_mnist(vae_type):
             h_dim=[512, 512],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=BernoulliSample,
-            activation=nn.LeakyReLU
+            activation=nn.Tanh
         )
     elif vae_type == 'LadderVariationalAutoencoder':
         vae_kwargs = dict(
