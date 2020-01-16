@@ -1,3 +1,8 @@
+"""Module with MNIST-like datasets
+
+MNISTBinarized and MNISTReal form the parent classes of the remaining datasets.
+"""
+
 import os
 import urllib
 
@@ -13,10 +18,109 @@ def onehot_encode(array, max_label=None):
     return np.eye(max_label)[array]
 
 
-# TODO Abstract base class for MNIST-like datasets
+class MNISTBinarized(Dataset):
+    """MNIST dataset including filtering and concationation of train and test sets.
+    
+    Serves binarized values in {0, 1}.
+    
+    The preprocessing, which consists of binarization using the normalized pixel values [0, 1] as binomial
+    probabilities, can either be done once ahead of training `preprocess=='static'` or done anew for each
+    example while training, `preprocess=='dynamic'`. Setting the `seed` will ensure reproducibility in either case.
+    
+    Args:
+        split (str): Whether to serve the 'train' or 'test' sets or 'join' the two to a single set.
+        exclude_labels (list): List of integer labels to exclude from the dataset.
+        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
+        preprocess (bool): If 'static', performs preprocessing before training.
+                           If 'deterministic' preprocessing is done deterministically before training.
+                           If 'dynamic' preprocessing is done on the fly. 
+
+    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
+         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
+         `split=='join'`.
+    """
+
+    _data_source = torchvision.datasets.MNIST
+    _repr_attributes = ['split', 'exclude_labels', 'preprocess', 'seed', 'root']
+
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
+                 transform=None, target_transform=None, download=True):
+        super().__init__()
+        
+        assert preprocess in ['dynamic', 'static', 'deterministic']
+        assert split in ['train', 'test', 'join']
+
+        self.split = split
+        self.exclude_labels = [] if exclude_labels is None else exclude_labels
+        self.preprocess = preprocess
+        self.seed = seed
+        self.root = root
+
+        np.random.seed(seed)
+        data_train = self._data_source(root=root, train=True, transform=transform,
+                                       target_transform=target_transform, download=download)
+        data_test = self._data_source(root=root, train=False, transform=transform,
+                                      target_transform=target_transform, download=download)
+
+        if split != 'join':
+            if split == 'train':
+                self.examples = np.array(data_train.data)
+                self.labels = onehot_encode(np.array(data_train.targets))
+            else:
+                self.examples = np.array(data_test.data)
+                self.labels = onehot_encode(np.array(data_test.targets))
+        else:
+            self.examples = np.concatenate([data_train.data, data_test.data])
+            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
+
+        if preprocess in ['static', 'deterministic']:
+            self.examples = self.scale(self.examples)
+            self.examples = self.warp(self.examples)
+
+        self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
+
+    def __getitem__(self, idx):
+        example = self.examples[idx].astype(np.float32)
+        if self.preprocess == 'dynamic':
+            example = self.warp(self.scale(example))
+        return example.astype(np.float32), self.labels[idx].astype(np.float32)
+    
+    @staticmethod
+    def filter(examples, labels, exclude_labels):
+        """Filter the dataset and return examples and labels without the excluded labels"""
+        rm_ids = np.isin(labels.argmax(axis=1), exclude_labels)
+        labels = labels[~rm_ids]
+        examples = examples[~rm_ids]
+        return examples, labels
+
+    def scale(self, examples):
+        """Standard scaling of MNIST.
+
+        Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
+        This results in values in [0, 1].
+        """
+        examples = examples.astype(np.float64)
+        examples /= 255  # /= examples.max()
+        return examples
+
+    def warp(self, examples):
+        if self.preprocess == 'deterministic':
+            idx = examples >= 0.5
+            examples[idx] = 1.0
+            examples[~idx] = 0.0
+            return examples
+        return np.random.binomial(1, examples)  # Binary sampling with normalized pixel values as probabilities
+
+    def __len__(self):
+        return self.examples.shape[0]
+
+    def __repr__(self):
+        s = f'{self.__class__.__name__}('
+        s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in self._repr_attributes])
+        return s + ')'
 
 
-class MNISTInterpolate(Dataset):
+class MNISTReal(MNISTBinarized):
     """MNIST dataset including filtering and concationation of train and test sets.
     
     Serves values in [0, 1] with gamma=0 returning the original dataset, gamma=-0.5 binarizing the dataset statically
@@ -29,79 +133,41 @@ class MNISTInterpolate(Dataset):
     Args:
         split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
         exclude_labels (list): List of integer labels to exclude from the dataset.
+        preprocess (bool): If 'static', performs preprocessing before training.
+                           If 'deterministic' preprocessing is done deterministically before training.
+                           If 'dynamic' preprocessing is done on the fly. 
         gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        preprocess (bool): If True, performs preprocessing ones before training. Else, preprocessing is done dynamically
         
-    NOTE If preprocess is True, the noise added to the dataset at different values of `split` is NOT the same pe
+    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
          example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
          `split=='join'`.
     """
+    _data_source = torchvision.datasets.MNIST
+    _repr_attributes = MNISTBinarized._repr_attributes + ['gamma']
 
-    def __init__(self, split='train', exclude_labels=None, gamma=0.0, preprocess='dynamic', seed=0, root='torch_data/',
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', gamma=0.0, seed=0, root='torch_data/',
                  transform=None, target_transform=None, download=True):
-        super().__init__()
-        
-        assert preprocess in ['dynamic', 'static']
-        assert split in ['train', 'test', 'join']
-
+        assert gamma <= 0.5 and gamma >= -0.5, 'gamma must be in [-0.5, 0.5]'
         self.gamma = gamma
-        self.split = split
-        self.seed = seed
-        self.dynamic_preprocessing = preprocess == 'dynamic'
-        self.exclude_labels = [] if exclude_labels is None else exclude_labels
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
+                         transform=transform, target_transform=target_transform, download=download)
 
-        np.random.seed(seed)
-        data_train = torchvision.datasets.MNIST(root=root, train=True, transform=transform,
-                                                 target_transform=target_transform, download=download)
-        data_test = torchvision.datasets.MNIST(root=root, train=False, transform=transform,
-                                                target_transform=target_transform, download=download)
-
-        if split != 'join':
-            if split == 'train':
-                self.examples = np.array(data_train.data)
-                self.labels = onehot_encode(np.array(data_train.targets))
-            else:
-                self.examples = np.array(data_test.data)
-                self.labels = onehot_encode(np.array(data_test.targets))
-        else:
-            self.examples = np.concatenate([data_train.data, data_test.data])
-            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
-
-        if preprocess == 'static':
-            self.examples = self.preprocess(self.examples, seed=seed)
-            self.examples = self.warp_pixels(self.examples, gamma)
-
-        self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
-        
-    def __getitem__(self, idx):
-        example = self.examples[idx].astype(np.float32)
-        if self.dynamic_preprocessing:
-            example = self.preprocess(example)
-            example = self.warp_pixels(example, self.gamma)
-        return example, self.labels[idx].astype(np.float32)
-
-    @staticmethod
-    def filter(examples, labels, exclude_labels):
-        """Filter the dataset and return examples and labels without the excluded labels"""
-        rm_ids = np.isin(labels.argmax(axis=1), exclude_labels)
-        labels = labels[~rm_ids]
-        examples = examples[~rm_ids]
-        return examples, labels
-
-    @staticmethod
-    def preprocess(examples):
+    def scale(self, examples):
         """Standard preprocessing of MNIST.
 
         Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
-        This results in values in [0, 1].
+        This results in continuous values in [0, 1].
         """
-        noise_matrix = np.random.rand_like(examples)
-        examples += noise_matrix
-        examples /= 256
+        if self.preprocess != 'deterministic':
+            noise_matrix = np.random.rand(*examples.shape)
+            examples += noise_matrix
+            examples /= 255
+        else:
+            examples = examples.astype(np.float32)
+            examples /= 256
         return examples
 
-    @staticmethod
-    def warp_pixels(examples, gamma):
+    def warp(self, examples):
         """
         Warping function that warps pixels from fully binarized {0,1} for gamma=0.5 to fully degraded (=0.5) for 
         gamma=-0.5.
@@ -111,112 +177,18 @@ class MNISTInterpolate(Dataset):
         [1] The continuous Bernoulli: ﬁxing a pervasive error in variational autoencoders
             http://arxiv.org/abs/1907.06845
         """
-        assert gamma <= 0.5 and gamma >= -0.5
-        if gamma == 0:
+        assert self.gamma <= 0.5 and self.gamma >= -0.5
+        if self.gamma == 0:
             return examples
-        if gamma == -0.5:
+        if self.gamma == -0.5:
             idx = examples < 0.5
             examples[idx] = 0
             examples[~idx] = 1
             return examples
-        if gamma < 0:
-            return np.clip((examples + gamma) / (1 + 2 * gamma), 0, 1)
-        return gamma + (1 - 2 * gamma) * examples
-
-    def __len__(self):
-        return self.examples.shape[0]
+        if self.gamma < 0:
+            return np.clip((examples + self.gamma) / (1 + 2 * self.gamma), 0, 1)
+        return self.gamma + (1 - 2 * self.gamma) * examples
     
-    def __repr__(self):
-        s = f'MNISTInterpolate('
-        s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in ['split', 'exclude_labels', 'gamma']])
-        return s + ')'
-    
-
-class MNISTBinarized(Dataset):
-    """MNIST dataset including filtering and concationation of train and test sets.
-    
-    Serves binarized values in {0, 1}.
-    
-    The preprocessing, which consists of binarization using the normalized pixel values [0, 1] as binomial
-    probabilities, can either be done once ahead of training `preprocess=='static'` or done anew for each
-    example while training, `preprocess=='dynamic'`. Setting the `seed` will ensure reproducibility in either case.
-    
-    Args:
-        split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
-        exclude_labels (list): List of integer labels to exclude from the dataset.
-        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        preprocess (bool): If True, performs preprocessing ones before training. Else, preprocessing is done dynamically
-        
-    NOTE If preprocess is True, the noise added to the dataset at different values of `split` is NOT the same pe
-         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
-         `split=='join'`.
-    """
-
-    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
-                 transform=None, target_transform=None, download=True):
-        super().__init__()
-        
-        assert preprocess in ['dynamic', 'static']
-        assert split in ['train', 'test', 'join']
-        
-        self.split = split
-        self.seed = seed
-        self.dynamic_preprocessing = preprocess == 'dynamic'
-        self.exclude_labels = [] if exclude_labels is None else exclude_labels
-
-        np.random.seed(seed)
-        data_train = torchvision.datasets.MNIST(root=root, train=True, transform=transform,
-                                                 target_transform=target_transform, download=download)
-        data_test = torchvision.datasets.MNIST(root=root, train=False, transform=transform,
-                                                target_transform=target_transform, download=download)
-
-        if split != 'join':
-            if split == 'train':
-                self.examples = np.array(data_train.data)
-                self.labels = onehot_encode(np.array(data_train.targets))
-            else:
-                self.examples = np.array(data_test.data)
-                self.labels = onehot_encode(np.array(data_test.targets))
-        else:
-            self.examples = np.concatenate([data_train.data, data_test.data])
-            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
-
-        if preprocess == 'static':
-            self.examples = self.preprocess(self.examples)
-
-        self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
-
-    def __getitem__(self, idx):
-        example = self.examples[idx].astype(np.float32)
-        if self.dynamic_preprocessing:
-            example = self.preprocess(example)
-        return example.astype(np.float32), self.labels[idx].astype(np.float32)
-
-    @staticmethod
-    def filter(examples, labels, exclude_labels):
-        """Filter the dataset and return examples and labels without the excluded labels"""
-        return MNISTInterpolate.filter(examples, labels, exclude_labels)
-
-    @staticmethod
-    def preprocess(examples):
-        """Standard preprocessing of MNIST.
-
-        Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
-        This results in values in [0, 1].
-        """
-        examples = examples.astype(np.float64)
-        examples /= 255  # /= examples.max()
-        examples = np.random.binomial(1, examples)  # Binary sampling with normalized pixel values as probabilities
-        return examples
-
-    def __len__(self):
-        return self.examples.shape[0]
-
-    def __repr__(self):
-        s = f'MNISTBinarized('
-        s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in ['split', 'exclude_labels']])
-        return s + ')'
-
 
 class MNISTBinarizedLarochelle(Dataset):
     def __init__(self, split, exclude_labels=None, root='torch_data/', transform=None, target_transform=None, download=True):
@@ -275,7 +247,7 @@ class MNISTBinarizedLarochelle(Dataset):
         return s + ')'
 
 
-class FashionMNISTInterpolate(Dataset):
+class FashionMNISTReal(MNISTReal):
     """FashionMNIST dataset including filtering and concationation of train and test sets.
     
     Serves values in [0, 1] with gamma=0 returning the original dataset, gamma=-0.5 binarizing the dataset statically
@@ -283,84 +255,30 @@ class FashionMNISTInterpolate(Dataset):
     
     The preprocessing, which consists of the addition of uniform noise to the raw pixel values and then interpolable
     binarization through setting gamma, can be done once ahead of training `preprocess=='static'` or done anew for each
-    example while training, `preprocess=='dynamic'`.
+    example while training, `preprocess=='dynamic'`
     
     Args:
         split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
         exclude_labels (list): List of integer labels to exclude from the dataset.
+        preprocess (bool): If 'static', performs preprocessing before training.
+                           If 'deterministic' preprocessing is done deterministically before training.
+                           If 'dynamic' preprocessing is done on the fly. 
         gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        preprocess (bool): If True, performs preprocessing ones before training. Else, preprocessing is done dynamically
         
-    NOTE If preprocess is True, the noise added to the dataset at different values of `split` is NOT the same pe
+    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same pe
          example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
          `split=='join'`.
     """
 
+    _data_source = torchvision.datasets.FashionMNIST
+
     def __init__(self, split='train', exclude_labels=None, gamma=0.0, preprocess='dynamic', seed=0, root='torch_data/',
                  transform=None, target_transform=None, download=True):
-        super().__init__()
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, gamma=gamma, seed=seed,
+                         root=root, transform=transform, target_transform=target_transform, download=download)
         
-        assert preprocess in ['dynamic', 'static']
-        assert split in ['train', 'test', 'join']
 
-        self.gamma = gamma
-        self.split = split
-        self.seed = seed
-        self.dynamic_preprocessing = preprocess == 'dynamic'
-        self.exclude_labels = [] if exclude_labels is None else exclude_labels
-
-        np.random.seed(seed)
-        data_train = torchvision.datasets.FashionMNIST(root=root, train=True, transform=transform,
-                                                        target_transform=target_transform, download=download)
-        data_test = torchvision.datasets.FashionMNIST(root=root, train=False, transform=transform,
-                                                       target_transform=target_transform, download=download)
-
-        if split != 'join':
-            if split == 'train':
-                self.examples = np.array(data_train.data)
-                self.labels = onehot_encode(np.array(data_train.targets))
-            else:
-                self.examples = np.array(data_test.data)
-                self.labels = onehot_encode(np.array(data_test.targets))
-        else:
-            self.examples = np.concatenate([data_train.data, data_test.data])
-            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
-
-        if preprocess == 'static':
-            self.examples = self.preprocess(self.examples, seed=seed)
-            self.examples = self.warp_pixels(self.examples, gamma)
-
-        self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
-        
-    def __getitem__(self, idx):
-        example = self.examples[idx].astype(np.float32)
-        if self.dynamic_preprocessing:
-            example = self.preprocess(example)
-            example = self.warp_pixels(example, self.gamma)
-        return example, self.labels[idx].astype(np.float32)
-
-    @staticmethod
-    def filter(examples, labels, exclude_labels):
-        return MNISTInterpolate.filter(examples, labels, exclude_labels)
-
-    @staticmethod
-    def preprocess(examples):
-        return MNISTInterpolate.preprocess(examples)
-
-    @staticmethod
-    def warp_pixels(examples, gamma):
-        return MNISTInterpolate.warp_pixels(examples, gamma)
-
-    def __len__(self):
-        return len(self.examples.shape[0])
-    
-    def __repr__(self):
-        s = f'FashionMNISTInterpolate('
-        s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in ['split', 'exclude_labels', 'gamma']])
-        return s + ')'
-
-
-class FashionMNISTBinarized(Dataset):
+class FashionMNISTBinarized(MNISTBinarized):
     """FashionMNIST dataset including filtering and concationation of train and test sets.
     
     Serves binarized values in {0, 1}.
@@ -375,64 +293,13 @@ class FashionMNISTBinarized(Dataset):
         gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
         preprocess (bool): If True, performs preprocessing ones before training. Else, preprocessing is done dynamically
         
-    NOTE If preprocess is True, the noise added to the dataset at different values of `split` is NOT the same pe
+    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same pe
          example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
          `split=='join'`.
     """
+    _data_source = torchvision.datasets.FashionMNIST
 
     def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
                  transform=None, target_transform=None, download=True):
-        super().__init__()
-        
-        assert preprocess in ['dynamic', 'static']
-        assert split in ['train', 'test', 'join']
-        
-        self.split = split
-        self.seed = seed
-        self.dynamic_preprocessing = preprocess == 'dynamic'
-        self.exclude_labels = [] if exclude_labels is None else exclude_labels
-
-        np.random.seed(seed)
-        data_train = torchvision.datasets.FashionMNIST(root=root, train=True, transform=transform,
-                                                 target_transform=target_transform, download=download)
-        data_test = torchvision.datasets.FashionMNIST(root=root, train=False, transform=transform,
-                                                target_transform=target_transform, download=download)
-
-        if split != 'join':
-            if split == 'train':
-                self.examples = np.array(data_train.data)
-                self.labels = onehot_encode(np.array(data_train.targets))
-            else:
-                self.examples = np.array(data_test.data)
-                self.labels = onehot_encode(np.array(data_test.targets))
-        else:
-            self.examples = np.concatenate([data_train.data, data_test.data])
-            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
-
-        if preprocess == 'static':
-            self.examples = self.preprocess(self.examples)
-
-        self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
-
-    def __getitem__(self, idx):
-        example = self.examples[idx].astype(np.float32)
-        if self.dynamic_preprocessing:
-            example = self.preprocess(example)
-        return example.astype(np.float32), self.labels[idx].astype(np.float32)
-
-    @staticmethod
-    def filter(examples, labels, exclude_labels):
-        """Filter the dataset and return examples and labels without the excluded labels"""
-        return MNISTInterpolate.filter(examples, labels, exclude_labels)
-
-    @staticmethod
-    def preprocess(examples):
-        return MNISTBinarized.preprocess(examples)
-
-    def __len__(self):
-        return self.examples.shape[0]
-
-    def __repr__(self):
-        s = f'FashionMNISTBinarized('
-        s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in ['split', 'exclude_labels']])
-        return s + ')'
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
+                         transform=transform, target_transform=target_transform, download=download)
