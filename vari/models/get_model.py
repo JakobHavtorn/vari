@@ -6,7 +6,7 @@ from vari.layers import GaussianSample, BernoulliSample, ContinuousBernoulliSamp
 
 
 def get_default_model_config(vae_type, dataset):
-    if dataset in ['MNISTBinarized', 'FashionMNISTBinarized']:
+    if dataset in ['MNISTBinarized', 'FashionMNISTBinarized', 'MNISTReal', 'FashionMNISTReal']:
         kwargs = get_default_model_config_mnist(vae_type)
     elif dataset in ['Moons', 'Spirals']:
         kwargs = get_default_model_config_synthetic_2d(vae_type)
@@ -17,14 +17,16 @@ def get_default_model_config_mnist(vae_type):
     # LeakyReLU for MNIST models
     if vae_type == 'VariationalAutoencoder':
         vae_kwargs = dict(
+            x_dim=784,
             z_dim=2,
-            h_dim=[512, 512],
+            h_dim=[512, 512, 256, 256],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=BernoulliSample,
-            activation=nn.Tanh
+            activation=nn.LeakyReLU
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(
+            x_dim=784,
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
             encoder_sample_layer=[GaussianSample, GaussianSample],
@@ -33,15 +35,17 @@ def get_default_model_config_mnist(vae_type):
         )
     elif vae_type == 'AuxilliaryVariationalAutoencoder':
         vae_kwargs = dict(
+            x_dim=784,
             z_dim=2,
             a_dim=2,
-            h_dim=[512, 512],
+            h_dim=[512, 512, 256, 256],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=BernoulliSample,
-            activation=nn.Tanh
+            activation=nn.LeakyReLU
         )
     elif vae_type == 'LadderVariationalAutoencoder':
         vae_kwargs = dict(
+            x_dim=784,
             z_dim=[2, 2],
             h_dim=[512, 512],
             encoder_sample_layer=GaussianSample,
