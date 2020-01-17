@@ -211,7 +211,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         
         Returns:
             tuple: Tuple of samples and distribution parameters for input space [(x, (px_parameters)), ...]
-        """   
+        """
         copy_latents = copy_latents if copy_latents is not None else [True] * len(latents)
         assert len(copy_latents) == len(latents)
 
@@ -230,11 +230,12 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             self.kl_divergence += self.kl_divergences[1]
             x, px_args = self.decoder[1](q_z1)
         else:
-            self.kl_divergences[1] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd), p_z=p_z1)
-            self.kl_divergence += self.kl_divergences[1]
+            self.kl_divergences[1] = (kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd)) +
+                                      kld_gaussian_gaussian(q_z1, (p_z1_mu, p_z1_sd), p_param=(q_z1_mu, q_z1_sd))) / 2
+            # self.kl_divergence += self.kl_divergences[1]
             x, px_args = self.decoder[1](p_z1)
 
-
+        # NOTE THE ABOVE CODE IN CASE WHERE IT IS IN A LOOP
         # q_zi, (q_zi_mu, q_zi_sd) = latents[-2]
         # if copy_latents[-2]:
         #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
@@ -244,6 +245,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), p_param=(p_zi_mu, p_zi_sd), p_z=p_zi)
         #     self.kl_divergence += self.kl_divergences[1]
         #     p_zi, (p_zi_mu, p_zi_sd) = self.decoder[1](p_zi)
+
+
 
         # Top most latent has unconditional prior and is always required to be given (i.e. copied)
         # q_z2, (q_z2_mu, q_z2_sd) = latents[-1]
