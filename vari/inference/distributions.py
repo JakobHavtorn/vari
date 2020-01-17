@@ -57,9 +57,23 @@ def log_bernoulli(x, p, eps=1e-8):
     return torch.sum(log_pdf, dim=-1)
 
 def log_continuous_bernoulli(x, p):
+    """
+    Returns the log pdf of the Continuous Bernoulli distribution parameterized by p evalauted at x
+    
+    Implemented as in [1]
+    
+    [1] The continuous Bernoulli: fixing a pervasive error in variational autoencoders, http://arxiv.org/abs/1907.06845
+    
+    Args:
+        x (tensor): Values to evaluate at
+        p (tensor): Bernoulli parameters
+    
+    Returns:
+        tensor: Log likelihood
+    """
     log_pdf = log_bernoulli(x, p)
-    log_C = torch.log(2 * atanh(1 - 2*p)) - torch.log(1 - 2*p)
-    return torch.sum(log_pdf + log_C, dim=-1)
+    log_C = torch.log(2 * atanh(1 - 2*p)) - torch.log(1 - 2*p)  # TODO Compute as Taylor Series
+    return log_pdf + torch.sum(log_C, dim=-1)
 
 
 def log_standard_categorical(p):
