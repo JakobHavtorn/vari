@@ -365,11 +365,11 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         # Generative p(a|z,x)
         p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
 
-        a_kl.clamp_(min=0.1)  # Free bits
         a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_sd), (p_a_mu, p_a_sd))
         z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_sd))
+        a_kl.clamp_(min=0.1)  # Free bits
         self.kl_divergences[0], self.kl_divergences[1] = z_kl, a_kl
-        self.kl_divergence = torch.min(0.1, a_kl) + z_kl
+        self.kl_divergence = a_kl + z_kl
 
         return p_x, px_args
     
