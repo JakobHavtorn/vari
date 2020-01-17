@@ -25,30 +25,22 @@ class Lambda(nn.Module):
 
     def forward(self, x):
         return self.lambd(x)
-    
-    # def __repr__(self):
-    #     return inspect.getsourcelines(self.lambd)[0][0].replace('\n', '')
 
 
-class Stochastic(nn.Module):
+class GaussianReparameterization(nn.Module):
     """
-    Base stochastic layer that uses the
-    reparametrization trick [Kingma 2013]
-    to draw a sample from a distribution
-    parametrised by mu and sd.
+    Base stochastic layer that uses the reparametrization trick [Kingma 2013]
+    to draw a sample from a normal distribution parametrised by mu and sd.
+    
+    If  z ~ N(mu, sd) and eps ~ N(0, 1) then z = mu + sd * eps
     """
     def reparametrize(self, mu, sd):
         epsilon = torch.randn_like(mu, requires_grad=False, device=get_device())
-        # # log_std = 0.5 * log_var
-        # # std = exp(log_std)
-        # std = log_var.mul(0.5).exp_()
-
-        # # z = std * epsilon + mu
         z = mu.addcmul(sd, epsilon)
         return z
 
 
-class GaussianSample(Stochastic):
+class GaussianSample(GaussianReparameterization):
     """
     Layer that represents a sample from a
     Gaussian distribution.
@@ -64,7 +56,7 @@ class GaussianSample(Stochastic):
         scale = [nn.Linear(in_features, out_features)]
         if scale_as == 'std':
             scale.append(nn.Softplus())
-            scale.append(Lambda(lambda x: x + 1e-8))  
+            scale.append(Lambda(lambda x: x + 1e-8))
         self.scale = nn.Sequential(*scale)
 
     def forward(self, x):
@@ -75,8 +67,8 @@ class GaussianSample(Stochastic):
     def log_likelihood(self, x, mu, sd):
         return log_gaussian(x, mu, sd)
 
-    
-class BernoulliSample(Stochastic):
+
+class BernoulliSample(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
@@ -84,10 +76,6 @@ class BernoulliSample(Stochastic):
 
         self.p = nn.Linear(in_features, out_features)
         self.activation = nn.Sigmoid()
-        
-    def reparametrize(self, p):
-        bernoulli = torch.distributions.bernoulli.Bernoulli(probs=p)
-        return bernoulli.sample(sample_shape=p.shape)
 
     def forward(self, x):
         p = self.activation(self.p.forward(x))
@@ -97,32 +85,24 @@ class BernoulliSample(Stochastic):
         return log_bernoulli(x, p)
     
     
-class ContinuousBernoulliSample(Stochastic):
+class ContinuousBernoulliSample(nn.Module):
     def __init__(self, in_features, out_features):
+        super().__init__()
         self.in_features = in_features
         self.out_features = out_features
 
-        self.p = nn.ModuleList([
+        self.p = nn.Sequential(
             nn.Linear(in_features, out_features),
             nn.Sigmoid()
-        ])
-
-    def reparametrize(self, p):
-        u = torch.rand_like(p, requires_grad=False, device=get_device())
-        # For p != 0.5
-        (torch.log(u * (2 * p - 1) + 1 - p) - torch.log(1 - p)) / (torch.log(p) - torch.log(1 - p))
-        # For p == 0.5
-        u
-        return z
+        )
         
     def forward(self, x):
         p = self.p(x)
-        return p
+        return p, (p,)
     
     def log_likelihood(self, x, p):
         return log_continuous_bernoulli(x, p)
         
-
 
 class GaussianMerge(GaussianSample):
     """
@@ -154,7 +134,7 @@ class GaussianMerge(GaussianSample):
         return self.reparametrize(mu, log_var), (mu, log_var)
 
 
-class GumbelSoftmax(Stochastic):
+class GumbelSoftmax(GaussianReparameterization):
     """
     Layer that represents a sample from a categorical
     distribution. Enables sampling and stochastic
