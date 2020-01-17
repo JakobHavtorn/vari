@@ -60,7 +60,7 @@ def get_default_model_config_synthetic_2d(vae_type):
         vae_kwargs = dict(
             x_dim=2,
             z_dim=2,
-            h_dim=[64, 64],
+            h_dim=[64, 64, 64, 64],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=GaussianSample,
         )
@@ -77,7 +77,7 @@ def get_default_model_config_synthetic_2d(vae_type):
             x_dim=2,
             z_dim=2,
             a_dim=2,
-            h_dim=[64, 64],
+            h_dim=[64, 64, 64, 64],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=GaussianSample,
         )
@@ -85,7 +85,7 @@ def get_default_model_config_synthetic_2d(vae_type):
         vae_kwargs = dict(
             x_dim=2,
             z_dim=[2, 2],
-            h_dim=[64, 64],
+            h_dim=[64, 64, 64, 64],
             encoder_sample_layer=GaussianSample,
             decoder_sample_layer=GaussianSample,
         )
