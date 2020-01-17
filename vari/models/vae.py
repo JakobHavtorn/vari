@@ -162,6 +162,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.h_dim = h_dim
+        
+        assert len(z_dim) <= 2, 'Does not support more than two latents ATM'
 
         enc_dims = [x_dim, *z_dim]
         dec_dims = enc_dims[::-1]  # reverse
