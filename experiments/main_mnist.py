@@ -75,11 +75,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                               num_workers=2, pin_memory=device == 'cuda')
 
     model_kwargs = get_default_model_config(vae_type, dataset_name)
+    torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
     model = getattr(vari.models.vae, vae_type)
-    model = model(
-        x_dim=np.prod(train_dataset[0][0].shape),
-        **model_kwargs
-    )
+    model = model(**model_kwargs)
     model.to(device)
     print(model)
 
