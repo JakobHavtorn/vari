@@ -7,19 +7,19 @@
 | ID       | Model | Train dataset |
 | -------- | ----- | ------------- |
 | 6243     | VAE   | MNIST         |
-| 6253 [R] | VAE   | FashionMNIST  |
-| -        | AVAE  | MNIST         |
-| -        | AVAE  | FashionMNIST  |
-| -        | HVAE  | MNIST         |
-| 6256 [R] | HVAE  | FashionMNIST  |
+| 6253     | VAE   | FashionMNIST  |
+| 6278     | AVAE  | MNIST         |
+| 6286     | AVAE  | FashionMNIST  |
+| 6263     | HVAE  | MNIST         |
+| 6256     | HVAE  | FashionMNIST  |
 
 **Excluded labels**
 
 | ID       | Model | EXCL | Train dataset |
 | -------- | ----- | ---- | ------------- |
-| -        | AVAE  | 8    | FashionMNIST  |
-| -        | HVAE  | 8    | FashionMNIST  |
-| 6255 [R] | VAE   | 8    | FashionMNIST  |
+| 6284     | AVAE  | 8    | FashionMNIST  |
+| 6264     | HVAE  | 8    | FashionMNIST  |
+| 6255     | VAE   | 8    | FashionMNIST  |
 | 6252     | AVAE  | 8    | MNIST         |
 | 6251     | HVAE  | 8    | MNIST         |
 | 6250     | VAE   | 8    | MNIST         |
