@@ -61,6 +61,13 @@ class DenseSequentialCoder(nn.Module):
         for layer, activation in zip(self.hidden, self.activations):
             x = activation(layer(x))
         return self.sample(x)
+    
+    
+class VariationalInferenceModel(nn.Module):
+    """Model that encodes the generative PGM: z_N -> z_N-1 -> ... -> z_1 --> x without amortized inference of z_:.
+    """
+    def __init__(self):
+        raise NotImplementedError()
 
 
 class VariationalAutoencoder(nn.Module):
@@ -158,10 +165,11 @@ class HierarchicalVariationalAutoencoder(nn.Module):
 
         enc_dims = [x_dim, *z_dim]
         dec_dims = enc_dims[::-1]  # reverse
+        h_dim_rev = h_dim[::-1]  # reverse
 
         encoder_layers = [DenseSequentialCoder(x_dim=enc_dims[i - 1], z_dim=enc_dims[i], h_dim=h_dim[i - 1],
                                                sample_layer=encoder_sample_layer[i - 1], activation=activation) for i in range(1, len(enc_dims))]
-        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim[i - 1],
+        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim_rev[i - 1],
                                                sample_layer=decoder_sample_layer[i - 1], activation=activation) for i in range(1, len(dec_dims))]
 
         self.encoder = nn.ModuleList(encoder_layers)
@@ -190,44 +198,76 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             latents.append((z, (q_z_mu, q_z_sd)))
         return latents
 
-    def decode(self, latents):
-        #  x -> z1 -> z2
-        # z2 -> z1 -> x
+    def decode(self, latents, copy_latents=None):
+        """Decode a list of latent representations
         
-        # x' -> z'1 = g'(x) -> z'2 = f'(z'1)
-        # z1 = f(z'2)  
-        # x = g(z'1) 
-
-        # latent[0] Z2 prior N(0, I)
-        # latent[1] Z1 prior N(mu2, logvar2)
-
-        # At top, use prior for KL.
-        # import IPython
-        # IPython.embed()
-
-        zi_q, (q_zi_mu, q_zi_sd) = latents[-1]
-        self.kl_divergences[0] = kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd))
-        self.kl_divergence = self.kl_divergences[0]
+        Args:
+            latents (list of tuple): List of samples and distribution parameters [(z1, (z1_parameters)), ...]
+            copy_latents (list of bool, optional): If not None must be a list that is True for each latent to copy from.
+                                                   the encoder and False when using the generative sample.
+                                                   Defaults to None in which case all latents are copied.
         
-        for i in range(0, len(self.decoder) - 1):
-            zi_p, pz_args = self.decoder[i](zi_q)
-            zi_q, qz_args = latents[-(i+2)]
-            self.kl_divergences[i + 1] = kld_gaussian_gaussian(zi_q, qz_args, pz_args)
-            self.kl_divergence += self.kl_divergences[i + 1]
+        Returns:
+            tuple: Tuple of samples and distribution parameters for input space [(x, (px_parameters)), ...]
+        """   
+        copy_latents = copy_latents if copy_latents is not None else [True] * len(latents)
+        assert len(copy_latents) == len(latents)
 
-        # zi_p, (p_zi_mu, p_zi_sd) = self.decoder[0](zi_q)
-        # zi_q, (q_zi_mu, q_zi_sd) = latents[-2]
-        # self.kl_divergence += kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
+        # Top most latent has unconditional prior and is always required to be given (i.e. copied)
+        q_z2, (q_z2_mu, q_z2_sd) = latents[-1]
+        if copy_latents[-1]:
+            self.kl_divergences[0] = kld_gaussian_gaussian(q_z2, (q_z2_mu, q_z2_sd))
+            self.kl_divergence = self.kl_divergences[0]
+            p_z1, (p_z1_mu, p_z1_sd) = self.decoder[0](q_z2)
+        else:
+            raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
+    
+        q_z1, (q_z1_mu, q_z1_sd) = latents[-2]
+        if copy_latents[-2]:
+            self.kl_divergences[1] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), (p_z1_mu, p_z1_sd))
+            self.kl_divergence += self.kl_divergences[1]
+            x, px_args = self.decoder[1](q_z1)
+        else:
+            self.kl_divergences[1] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd), p_z=p_z1)
+            self.kl_divergence += self.kl_divergences[1]
+            x, px_args = self.decoder[1](p_z1)
 
-        x, px_args = self.decoder[-1](zi_q)
 
-        # for i, (latent, decoder) in enumerate(zip(reversed(latents[1:]), self.decoder[:-1])):
-        #     zi_q, (q_zi_mu, q_zi_sd) = latent
-        #     zi_p, (p_zi_mu, p_zi_sd) = decoder(zi_q)
-        #     self.kl_divergence += kld_gaussian_gaussian(zi_q, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
+        # q_zi, (q_zi_mu, q_zi_sd) = latents[-2]
+        # if copy_latents[-2]:
+        #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
+        #     self.kl_divergence += self.kl_divergences[1]
+        #     p_zi, (p_zi_mu, p_zi_sd) = self.decoder[1](q_zi)
+        # else:
+        #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), p_param=(p_zi_mu, p_zi_sd), p_z=p_zi)
+        #     self.kl_divergence += self.kl_divergences[1]
+        #     p_zi, (p_zi_mu, p_zi_sd) = self.decoder[1](p_zi)
 
-        # zi_q, (q_zi_mu, q_zi_log_var) = latents[0]
-        # x, px_args = self.decoder[-1](zi_q)
+        # Top most latent has unconditional prior and is always required to be given (i.e. copied)
+        # q_z2, (q_z2_mu, q_z2_sd) = latents[-1]
+        # self.kl_divergences[0] = kld_gaussian_gaussian(q_z2, (q_z2_mu, q_z2_sd))
+        # self.kl_divergence = self.kl_divergences[0]
+
+        # The lower layer latents have priors that are conditional on the previous layer's outupt.
+        # If we copy the latent, then we use generative samples to evaluate the log-likelihood of both the posterior,
+        # q(zi|zi+1), and of the prior, p(zi|zi-1). If we do not copy, the the samples 
+        # for i in range(1, len(self.decoder)):
+        #     if copy_latents[-(i+1)]:
+        #         self.kl_divergences[i] = kld_gaussian_gaussian(q_zi, qz_args, pz_args)
+        #     else:
+        #         # If latents are None this signifies that we don't copy the latent encoding from that layer and instead
+        #         # use the generated sample
+        #         p_zi, pz_args = self.decoder[i - 1](p_zi)
+        #         q_zi, qz_args = latents[-(i+1)]
+        #         self.kl_divergences[i] = kld_gaussian_gaussian(q_zi, qz_args, pz_args, p_zi)
+                
+        #     self.kl_divergence += self.kl_divergences[i]
+
+        # if copy_latents[-2]:
+        #     x, px_args = self.decoder[-1](q_z1)
+        # else:
+        #     x, px_args = self.decoder[-1](p_z1)
+
         return x, px_args
 
     def forward(self, x):
@@ -253,7 +293,6 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         :param z: (torch.autograd.Variable) Random normal variable
         :return: (torch.autograd.Variable) generated sample
         """
-        #TODO This should be different from decoder
         for decoder in self.decoder:
             z, qz_args = decoder(z)
         return z, qz_args
@@ -326,10 +365,11 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         # Generative p(a|z,x)
         p_a, (p_a_mu, p_a_sd) = self.aux_decoder(torch.cat([p_x, q_z], dim=1))
 
+        a_kl.clamp_(min=0.1)  # Free bits
         a_kl = kld_gaussian_gaussian(q_a, (q_a_mu, q_a_sd), (p_a_mu, p_a_sd))
         z_kl = kld_gaussian_gaussian(q_z, (q_z_mu, q_z_sd))
         self.kl_divergences[0], self.kl_divergences[1] = z_kl, a_kl
-        self.kl_divergence = a_kl + z_kl
+        self.kl_divergence = torch.min(0.1, a_kl) + z_kl
 
         return p_x, px_args
     
