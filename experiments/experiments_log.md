@@ -1,6 +1,6 @@
 # Experiment log
 
-## Experiments run 15/01
+## 15/01 MNIST/FashionMNIST
 
 **Full datasets**
 
@@ -30,3 +30,30 @@
 | 6245     | HVAE  | 4    | MNIST         |
 | 6244     | VAE   | 4    | MNIST         |
 
+
+## 17-01 Moons/Spirals
+
+| ID       | Model | Train dataset |
+| -------- | ----- | ------------- |
+|          | VAE   |               |
+|          | VAE   |               |
+|          | AVAE  |               |
+|          | AVAE  |               |
+|          | HVAE  |               |
+|          | HVAE  |               |
+
+
+## Moons and Spiral 
+
+if dataset_name == 'Moons':
+    run_ids = dict(
+        vae=6209,
+        hvae=6203,
+        avae=6219,
+    )
+elif dataset_name == 'Spirals':
+    run_ids = dict(
+        vae=6211,
+        avae=6220,
+        hvae=6205,
+    )
