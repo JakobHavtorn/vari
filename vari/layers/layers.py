@@ -3,6 +3,7 @@ import inspect
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributions
 
 from torch.autograd import Variable
 
@@ -27,23 +28,13 @@ class Lambda(nn.Module):
         return self.lambd(x)
 
 
-class GaussianReparameterization(nn.Module):
-    """
-    Base stochastic layer that uses the reparametrization trick [Kingma 2013]
-    to draw a sample from a normal distribution parametrised by mu and sd.
-    
-    If  z ~ N(mu, sd) and eps ~ N(0, 1) then z = mu + sd * eps
-    """
-    def reparametrize(self, mu, sd):
-        epsilon = torch.randn_like(mu, requires_grad=False, device=get_device())
-        z = mu.addcmul(sd, epsilon)
-        return z
+class Distribution(nn.Module):
+    prior = None
 
 
-class GaussianSample(GaussianReparameterization):
+class GaussianSample(Distribution):
     """
-    Layer that represents a sample from a
-    Gaussian distribution.
+    Layer that parameterizes a Gaussian distribution.
     """
     def __init__(self, in_features, out_features, scale_as='std'):
         super().__init__()
@@ -59,33 +50,47 @@ class GaussianSample(GaussianReparameterization):
             scale.append(Lambda(lambda x: x + 1e-8))
         self.scale = nn.Sequential(*scale)
 
+    def get_prior(self, mu=None, scale=None):
+        if mu is None and scale is None:
+            return torch.distributions.Independent(torch.distributions.Normal(
+                torch.zeros(self.out_features).to(get_device()),
+                torch.ones(self.out_features).to(get_device())
+            ), 1)
+            # return torch.distributions.MultivariateNormal(
+            #     loc=torch.zeros(self.out_features).to(get_device()),
+            #     covariance_matrix=torch.eye(self.out_features).to(get_device())
+            # )
+        return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
+        # cov = torch.diag_embed(scale ** 2)
+        # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
+        
+
     def forward(self, x):
         mu = self.mu(x)
         scale = self.scale(x)
-        return self.reparametrize(mu, scale), (mu, scale)
+        return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
+        # NOTE The below allows using analytical KL divergence directly
+        # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
+        # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
 
-    def log_likelihood(self, x, mu, sd):
-        return log_gaussian(x, mu, sd)
 
-
-class BernoulliSample(nn.Module):
+class BernoulliSample(Distribution):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
 
-        self.p = nn.Linear(in_features, out_features)
-        self.activation = nn.Sigmoid()
+        self.p = nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
-        p = self.activation(self.p.forward(x))
-        return p, (p,)
+        p = self.p.forward(x)
+        return torch.distributions.Independent(torch.distributions.Bernoulli(probs=p), 1)
 
-    def log_likelihood(self, x, p):
-        return log_bernoulli(x, p)
     
-    
-class ContinuousBernoulliSample(nn.Module):
+class ContinuousBernoulliSample(Distribution):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
@@ -104,7 +109,7 @@ class ContinuousBernoulliSample(nn.Module):
         return log_continuous_bernoulli(x, p)
         
 
-class GaussianMerge(GaussianSample):
+class GaussianMerge(Distribution):
     """
     Precision weighted merging of two Gaussian
     distributions.
@@ -134,7 +139,7 @@ class GaussianMerge(GaussianSample):
         return self.reparametrize(mu, log_var), (mu, log_var)
 
 
-class GumbelSoftmax(GaussianReparameterization):
+class GumbelSoftmax(Distribution):
     """
     Layer that represents a sample from a categorical
     distribution. Enables sampling and stochastic

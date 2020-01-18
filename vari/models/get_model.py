@@ -20,8 +20,8 @@ def get_default_model_config_mnist(vae_type):
             x_dim=784,
             z_dim=2,
             h_dim=[512, 512, 256, 256],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=BernoulliSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=BernoulliSample,
             activation=nn.LeakyReLU
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
@@ -29,8 +29,8 @@ def get_default_model_config_mnist(vae_type):
             x_dim=784,
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
-            encoder_sample_layer=[GaussianSample, GaussianSample],
-            decoder_sample_layer=[GaussianSample, BernoulliSample],
+            encoder_distribution=[GaussianSample, GaussianSample],
+            decoder_distribution=[GaussianSample, BernoulliSample],
             activation=nn.LeakyReLU
         )
     elif vae_type == 'AuxilliaryVariationalAutoencoder':
@@ -39,8 +39,8 @@ def get_default_model_config_mnist(vae_type):
             z_dim=2,
             a_dim=2,
             h_dim=[512, 512, 256, 256],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=BernoulliSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=BernoulliSample,
             activation=nn.LeakyReLU
         )
     elif vae_type == 'LadderVariationalAutoencoder':
@@ -48,8 +48,8 @@ def get_default_model_config_mnist(vae_type):
             x_dim=784,
             z_dim=[2, 2],
             h_dim=[512, 512],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=BernoulliSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=BernoulliSample,
             activation=nn.LeakyReLU
         )
     return vae_kwargs
@@ -61,16 +61,16 @@ def get_default_model_config_synthetic_2d(vae_type):
             x_dim=2,
             z_dim=2,
             h_dim=[64, 64, 32, 32],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=GaussianSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=GaussianSample,
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(
             x_dim=2,
             z_dim=[2, 2],
             h_dim=[[64, 64], [32, 32]],
-            encoder_sample_layer=[GaussianSample, GaussianSample],
-            decoder_sample_layer=[GaussianSample, GaussianSample],
+            encoder_distribution=[GaussianSample, GaussianSample],
+            decoder_distribution=[GaussianSample, GaussianSample],
         )
     elif vae_type == 'AuxilliaryVariationalAutoencoder':
         vae_kwargs = dict(
@@ -78,15 +78,15 @@ def get_default_model_config_synthetic_2d(vae_type):
             z_dim=2,
             a_dim=2,
             h_dim=[64, 64, 32, 32],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=GaussianSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=GaussianSample,
         )
     elif vae_type == 'LadderVariationalAutoencoder':
         vae_kwargs = dict(
             x_dim=2,
             z_dim=[2, 2],
             h_dim=[64, 64, 32, 32],
-            encoder_sample_layer=GaussianSample,
-            decoder_sample_layer=GaussianSample,
+            encoder_distribution=GaussianSample,
+            decoder_distribution=GaussianSample,
         )
     return vae_kwargs

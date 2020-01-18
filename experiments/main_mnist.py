@@ -104,9 +104,11 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 x_iw = x.view(x.shape[0], np.prod(x.shape[1:]))
                 x_iw = x_iw.repeat(1, importance_samples).view(-1, x_iw.shape[1])
                 
-                x, px_args = model(x_iw)
-                likelihood = model.log_likelihood(x_iw, *px_args)
+                # import IPython
+                # IPython.embed()
+                px = model(x_iw)
                 kl_divergence = model.kl_divergence
+                likelihood = px.log_prob(x_iw)
 
                 elbo = likelihood - beta * kl_divergence
 
@@ -154,9 +156,8 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
-                px, px_args = model.sample(p_z_samples)
-                px_args = [v.cpu().detach().numpy() for v in px_args]
-                np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px_args)
+                px = model.sample(p_z_samples)
+                np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             
             epoch += 1

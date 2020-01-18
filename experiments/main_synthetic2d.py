@@ -93,9 +93,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 # Importance sampling
                 x_iw = x.repeat(1, importance_samples).view(-1, x.shape[1])
 
-                px, (px_mu, px_sigma) = model(x_iw)
+                px = model(x_iw)
                 kl_divergence = model.kl_divergence
-                likelihood = model.log_likelihood(x_iw, *(px_mu, px_sigma))
+                likelihood = px.log_prob(x_iw)
 
                 elbo = likelihood - beta * kl_divergence
                 elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
