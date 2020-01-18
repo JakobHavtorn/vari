@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-import vari.models.vae
+from vari.models.vae import DenseSequentialCoder
 
 from vari.layers import GaussianSample, BernoulliSample, ContinuousBernoulliSample
 
@@ -16,13 +16,22 @@ def get_default_model_config(vae_type, dataset):
 def get_default_model_config_mnist(vae_type):
     # LeakyReLU for MNIST models
     if vae_type == 'VariationalAutoencoder':
+        x_dim, z_dim, h_dim = 784, 2, [512, 512, 256, 256]
         vae_kwargs = dict(
-            x_dim=784,
-            z_dim=2,
-            h_dim=[512, 512, 256, 256],
-            encoder_distribution=GaussianSample,
-            decoder_distribution=BernoulliSample,
-            activation=nn.LeakyReLU
+            encoder=DenseSequentialCoder(
+                x_dim=x_dim,
+                z_dim=z_dim,
+                h_dim=h_dim,
+                distribution=GaussianSample,
+                activation=nn.LeakyReLU
+            ),
+            decoder=DenseSequentialCoder(
+                x_dim=z_dim,
+                z_dim=x_dim,
+                h_dim=list(reversed(h_dim)),
+                distribution=BernoulliSample,
+                activation=nn.LeakyReLU
+            )
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(

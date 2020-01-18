@@ -88,8 +88,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    z_dim = model.z_dim if isinstance(model.z_dim, int) else model.z_dim[-1]
-    p_z_samples = torch.randn(1000, z_dim).to(device)
+    p_z_samples = z = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
     try:
         while epoch < n_epochs:
             model.train()
@@ -122,7 +121,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 
                 likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
                 kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                kl_divergences = [log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  for kl_divergence in model.kl_divergences]
+                kl_divergences = [log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1) for kl_divergence in model.kl_divergences]
 
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
@@ -156,7 +155,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
-                px = model.sample(p_z_samples)
+                px = model.generate(z=p_z_samples)
                 np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             

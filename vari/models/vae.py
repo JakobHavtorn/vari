@@ -81,21 +81,11 @@ class VariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim, encoder_distribution=GaussianSample, decoder_distribution=GaussianSample, activation=nn.Tanh, encoder=None, decoder=None):
+    def __init__(self, encoder, decoder, sampler=None):
         super().__init__()
-
-        self.x_dim = x_dim  # if isinstance(x_dim, int) else np.prod(x_dim)  # The dim or flatten
-        self.z_dim = z_dim
-        self.h_dim = h_dim
-
-        if encoder is not None:
-            self.encoder = encoder
-        else:
-            self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim, distribution=encoder_distribution, activation=activation)
-        if decoder is not None:
-            self.decoder = decoder
-        else:
-            self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), distribution=decoder_distribution, activation=activation)
+        self.sampler = sampler
+        self.encoder = encoder
+        self.decoder = decoder
         self.kl_divergences = [0]
         self.kl_divergence = 0
         self.initialize()
@@ -125,24 +115,24 @@ class VariationalAutoencoder(nn.Module):
         # Latent inference q(z|a,x)
         pz = self.encoder(x)
         z = pz.rsample()  # NOTE use sampler to sample MC and IW samples
-
         # Generative p(x|z)
         px = self.decoder(z)
-
         # KL Divergence
         self.kl_divergence = torch.distributions.kl_divergence(pz, self.encoder.distribution.get_prior())
         # self.kl_divergence = kld_gaussian_gaussian(z, (pz.mean, pz.variance))
         self.kl_divergences[0] = self.kl_divergence
-
         return px
 
-    def sample(self, z):
+    def generate(self, n_samples=None, z=None, seed=None):
         """
-        Given z ~ N(0, I) generates a sample from
-        the learned distribution based on p_θ(x|z).
-        :param z: (torch.autograd.Variable) Random normal variable
-        :return: (torch.autograd.Variable) generated sample
+        Generate samples from the generative model by either sampling `n_samples` from the prior p(z) or by decoding
+        the given latent representation `z`. In both cases, setting `seed` can makes decoding reproducible.
         """
+        # if seed is not None:
+        #     torch.manual_seed(seed)
+        if z is not None:
+            return self.decode(z)
+        z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
         return self.decode(z)
 
     def elbo(self, x, beta=1):
