@@ -30,17 +30,16 @@
 | 6245     | HVAE  | 4    | MNIST         |
 | 6244     | VAE   | 4    | MNIST         |
 
-
 ## 17-01 Moons/Spirals
 
 | ID       | Model | Train dataset |
 | -------- | ----- | ------------- |
-|          | VAE   |               |
-|          | VAE   |               |
-|          | AVAE  |               |
-|          | AVAE  |               |
-|          | HVAE  |               |
-|          | HVAE  |               |
+| 6372     | VAE   | Moons         |
+| 6378     | HVAE  | Moons         |
+| 6380     | AVAE  | Moons         |
+| 6383     | VAE   | Spirals       |
+| 6386     | HVAE  | Spirals       |
+| 6387     | AVAE  | Spirals       |
 
 
 ## Moons and Spiral 
