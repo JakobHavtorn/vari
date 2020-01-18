@@ -19,15 +19,6 @@ class Identity(nn.Module):
         return x
 
 
-class Lambda(nn.Module):
-    def __init__(self, lambd):
-        super().__init__()
-        self.lambd = lambd
-
-    def forward(self, x):
-        return self.lambd(x)
-    
-    
 class AddConstant(nn.Module):
     def __init__(self, constant):
         super().__init__()
