@@ -26,6 +26,18 @@ class Lambda(nn.Module):
 
     def forward(self, x):
         return self.lambd(x)
+    
+    
+class AddConstant(nn.Module):
+    def __init__(self, constant):
+        super().__init__()
+        self.constant = constant
+        
+    def forward(self, tensor1):
+        return tensor1 + self.constant
+
+    def __repr__(self):
+        return f'AddConstant({self.constant})'
 
 
 class Distribution(nn.Module):
@@ -47,7 +59,7 @@ class GaussianSample(Distribution):
         scale = [nn.Linear(in_features, out_features)]
         if scale_as == 'std':
             scale.append(nn.Softplus())
-            scale.append(Lambda(lambda x: x + 1e-8))
+            scale.append(AddConstant(1e-8))
         self.scale = nn.Sequential(*scale)
 
     def get_prior(self, mu=None, scale=None):
