@@ -163,6 +163,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.n_layers = len(encoder)
+        assert self.n_layers <= 2, 'Does not support more than two layers ATM'
         self.kl_divergences = OrderedDict([(f'z{i}', 0) for i in range(1, self.n_layers)])
 
     @property
@@ -230,7 +231,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         qz1_samples, qz1 = latents[f'z{1}']
         if copy_latents[-2]:
             # self.kl_divergences[f'z{1}'] = kld_gaussian_gaussian(qz1_samples, (qz1.mean, qz1.stddev), (pz1.mean, pz1.stddev))
-            self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
+            # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
+            self.kl_divergences[f'z{1}'] = qz1.log_prob(qz1_samples) - pz1.log_prob(qz1_samples)
             px = self.decoder[1](qz1_samples)
         else:
             self.kl_divergences[1] = (kld_gaussian_gaussian(qz1_samples, qz1, p_param=pz1) +
