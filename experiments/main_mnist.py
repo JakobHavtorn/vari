@@ -87,7 +87,11 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    p_z_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+    if isinstance(model, vari.models.vae.HierarchicalVariationalAutoencoder):
+        pz_samples = model.encoder[0].distribution.get_prior().sample(torch.Size([1000]))
+    else:
+        pz_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+
     try:
         while epoch < n_epochs:
             model.train()

@@ -82,7 +82,11 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    p_z_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+    if isinstance(model, vari.models.vae.HierarchicalVariationalAutoencoder):
+        pz_samples = model.encoder[0].distribution.get_prior().sample(torch.Size([1000]))
+    else:
+        pz_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+
     try:
         while epoch < n_epochs:
             model.train()
@@ -99,7 +103,6 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
 
                 loss = - torch.mean(elbo)
-                
                 loss.backward()
                 optimizer.step()
 
@@ -135,7 +138,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
-                px = model.generate(z=p_z_samples)
+                px = model.generate(z=pz_samples)
                 np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
             
@@ -143,5 +146,6 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
 
     except KeyboardInterrupt:
         print('Interrupted experiment')
-    finally:
         return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
+
+    return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
