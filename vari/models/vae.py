@@ -109,7 +109,7 @@ class VariationalAutoencoder(nn.Module):
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples)
-        likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        likelihood = px.log_prob(x.view(-1, x.shape[-1]))
         elbo = likelihood - beta * self.kl_divergence
         if importance_samples:
             return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
@@ -184,7 +184,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         """
         qz = self.encode(x, importance_samples=importance_samples)
         px = self.decode(qz, copy_latents=copy_latents)
-        likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        likelihood = px.log_prob(x.view(-1, x.shape[-1]))
         elbo = likelihood - beta * self.kl_divergence
         if importance_samples:
             return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
@@ -223,7 +223,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         # Top most latent has unconditional prior and is always required to be given (i.e. copied)
         qz2_samples, qz2 = latents[f'z{2}']
         if copy_latents[-1]:
-            self.kl_divergences[f'z{2}'] = torch.distributions.kl_divergence(qz2, self.encoder[0].distribution.get_prior())
+            # self.kl_divergences[f'z{2}'] = torch.distributions.kl_divergence(qz2, self.encoder[0].distribution.get_prior())
+            self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - self.encoder[0].distribution.get_prior().log_prob(qz2_samples)
             pz1 = self.decoder[0](qz2_samples)
         else:
             raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')

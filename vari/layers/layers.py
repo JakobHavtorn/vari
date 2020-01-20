@@ -8,7 +8,7 @@ import torch.distributions
 from torch.autograd import Variable
 
 from vari.utilities import get_device
-from vari.inference.distributions import log_gaussian, log_bernoulli, log_continuous_bernoulli
+from vari.inference.distributions import DiagonalGaussian, Bernoulli, log_gaussian, log_bernoulli, log_continuous_bernoulli
 
 
 class Identity(nn.Module):
@@ -53,25 +53,31 @@ class GaussianSample(Distribution):
 
     def get_prior(self, mu=None, scale=None):
         if mu is None and scale is None:
-            return torch.distributions.Independent(torch.distributions.Normal(
-                loc=torch.zeros(self.out_features).to(get_device()),
-                scale=torch.ones(self.out_features).to(get_device())
-            ), 1)
+            return DiagonalGaussian(
+                torch.zeros(self.out_features).to(get_device()),
+                torch.ones(self.out_features).to(get_device())
+            )
+            # return torch.distributions.Independent(torch.distributions.Normal(
+            #     loc=torch.zeros(self.out_features).to(get_device()),
+            #     scale=torch.ones(self.out_features).to(get_device())
+            # ), 1)
             # NOTE The below allows using analytical KL divergence directly
             # return torch.distributions.MultivariateNormal(
             #     loc=torch.zeros(self.out_features).to(get_device()),
             #     covariance_matrix=torch.eye(self.out_features).to(get_device())
             # )
-        return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
+        return DiagonalGaussian(mu, scale)
+        # return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
         # NOTE The below allows using analytical KL divergence directly
         # cov = torch.diag_embed(scale ** 2)
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
-        
+
 
     def forward(self, x):
         mu = self.mu(x)
         scale = self.scale(x)
-        return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
+        return DiagonalGaussian(mu, scale)
+        # return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
         # NOTE The below allows using analytical KL divergence directly
         # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)

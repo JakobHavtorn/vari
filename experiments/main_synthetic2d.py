@@ -73,7 +73,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     model = model(**model_kwargs)
     model.to(device)
     print(model)
-    summary(model, (np.prod(train_dataset[0][0].shape),))
+    # summary(model, (np.prod(train_dataset[0][0].shape),))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     

@@ -17,6 +17,52 @@ def atanh(x):
     return 0.5 * torch.log(1 + x) - torch.log(1 - x)
 
 
+class Distributon():
+    def sample(self, shape=None):
+        with torch.no_grad():
+            return self.rsample(shape)
+
+
+class DiagonalGaussian(Distributon):
+    def __init__(self, mu, sd):
+        self.mu = mu
+        self.sd = sd
+
+    def rsample(self, shape=None):
+        if shape is None:
+            epsilon = torch.randn_like(self.mu, requires_grad=False, device=self.mu.device)
+        else:
+            epsilon = torch.randn((*shape, *self.mu.shape), requires_grad=False, device=self.mu.device)
+        sample = self.mu.addcmul(self.sd, epsilon)
+        return sample
+
+    def log_prob(self, x):
+        log_pdf = - 0.5 * math.log(2 * math.pi) - self.sd.log() - (x - self.mu)**2 / (2 * self.sd**2)
+        return torch.sum(log_pdf, dim=-1)
+    
+    @property
+    def mean(self):
+        return self.mu
+    
+    @property
+    def stddev(self):
+        return self.sd
+    
+    @property
+    def variance(self):
+        return self.sd ** 2
+
+
+class Bernoulli(Distributon):
+    def __init__(self, p):
+        self.p = p
+        
+    def sample(self):
+        epsilon = torch.rand_like(mu, requires_grad=False, device=self.mu.device)
+        sample = torch.FloatTensor(self.p > epsilon)
+        return sample
+
+
 def log_standard_gaussian(x):
     """
     Evaluates the log pdf of a standard normal distribution at x.
