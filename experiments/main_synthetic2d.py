@@ -108,7 +108,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 # Importance sampling
                 kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
                 likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                kl_divergences = [log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  for kl_divergence in model.kl_divergences]
+                kl_divergences = [log_sum_exp(kl.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  for kl in model.kl_divergences]
 
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()

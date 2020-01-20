@@ -227,7 +227,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         q_z1, (q_z1_mu, q_z1_sd) = latents[-2]
         if copy_latents[-2]:
             self.kl_divergences[1] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), (p_z1_mu, p_z1_sd))
-            self.kl_divergence += self.kl_divergences[1]
+            self.kl_divergence = self.kl_divergence + self.kl_divergences[1]
             x, px_args = self.decoder[1](q_z1)
         else:
             self.kl_divergences[1] = (kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd)) +
