@@ -223,7 +223,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         # Top most latent has unconditional prior and is always required to be given (i.e. copied)
         qz2_samples, qz2 = latents[f'z{2}']
         if copy_latents[-1]:
-            self.kl_divergences[f'z{2}'] = torch.distributions.kl_divergence(qz2, self.encoder[0].distribution.get_prior())
+            # self.kl_divergences[f'z{2}'] = torch.distributions.kl_divergence(qz2, self.encoder[0].distribution.get_prior())
+            self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - self.encoder[0].distribution.get_prior().log_prob(qz2_samples)
             pz1 = self.decoder[0](qz2_samples)
         else:
             raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
