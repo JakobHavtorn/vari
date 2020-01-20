@@ -219,18 +219,20 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         q_z2, (q_z2_mu, q_z2_sd) = latents[-1]
         if copy_latents[-1]:
             self.kl_divergences[1] = kld_gaussian_gaussian(q_z2, (q_z2_mu, q_z2_sd))
-            self.kl_divergence = self.kl_divergences[0]
+            self.kl_divergence = self.kl_divergences[1]
             p_z1, (p_z1_mu, p_z1_sd) = self.decoder[0](q_z2)
         else:
             raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
     
         q_z1, (q_z1_mu, q_z1_sd) = latents[-2]
         if copy_latents[-2]:
-            self.kl_divergences[0] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), (p_z1_mu, p_z1_sd))
-            self.kl_divergence = self.kl_divergence + self.kl_divergences[1]
+            self.kl_divergences[0] = kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd))
+            self.kl_divergence = self.kl_divergence + self.kl_divergences[0]
             x, px_args = self.decoder[1](q_z1)
         else:
-            self.kl_divergences[0] = kld_gaussian_gaussian(p_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd))
+            self.kl_divergences[0] = kld_gaussian_gaussian(p_z1, (p_z1_mu, p_z1_sd), p_param=(q_z1_mu, q_z1_sd))
+            self.kl_divergence = self.kl_divergence + self.kl_divergences[0]
+            # self.kl_divergences[0] = kld_gaussian_gaussian(p_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd))
             # self.kl_divergences[0] = (kld_gaussian_gaussian(q_z1, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd)) +
                                     #   kld_gaussian_gaussian(q_z1, (p_z1_mu, p_z1_sd), p_param=(q_z1_mu, q_z1_sd))) / 2
             # self.kl_divergence += self.kl_divergences[1]
