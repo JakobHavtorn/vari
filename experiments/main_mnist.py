@@ -16,7 +16,7 @@ import vari.models.vae
 import vari.datasets
 
 from vari.models import get_default_model_config
-from vari.utilities import get_device, log_sum_exp
+from vari.utilities import get_device, log_sum_exp, summary
 from vari.inference import log_gaussian, DeterministicWarmup
 
 import IPython
@@ -45,12 +45,10 @@ def default_configuration():
     warmup_epochs = 0
 
     # VariationalAutoencoder, LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    # TODO VariationalAutoencoder should support multiple stochastic layers instead of separate HierarchicalVariationalAutoencoder class
     vae_type = 'VariationalAutoencoder'
     # vae_type = 'HierarchicalVariationalAutoencoder'
     # vae_type = 'AuxilliaryVariationalAutoencoder'
     # vae_type = 'LadderVariationalAutoencoder'
-    # vae_kwargs = get_vae_kwargs(vae_type)
 
     device = get_device()
     seed = 0
@@ -72,7 +70,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     train_dataset = train_dataset(**dataset_kwargs)
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                              num_workers=2, pin_memory=device == 'cuda')
+                              num_workers=2, pin_memory=device=='cuda')
 
     model_kwargs = get_default_model_config(vae_type, dataset_name)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
@@ -80,6 +78,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     model = model(**model_kwargs)
     model.to(device)
     print(model)
+    summary(model, (np.prod(train_dataset[0][0].shape),))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
@@ -88,7 +87,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    p_z_samples = z = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+    p_z_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
     try:
         while epoch < n_epochs:
             model.train()
@@ -96,45 +95,31 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
             beta = next(deterministic_warmup)
             for b, (x, _) in tqdm(enumerate(train_loader), leave=False, total=len(train_loader), smoothing=0):
                 x = x.to(device)
-                
+
                 optimizer.zero_grad()
 
-                # Importance sampling
-                x_iw = x.view(x.shape[0], np.prod(x.shape[1:]))
-                x_iw = x_iw.repeat(1, importance_samples).view(-1, x_iw.shape[1])
-                
                 # import IPython
                 # IPython.embed()
-                px = model(x_iw)
-                kl_divergence = model.kl_divergence
-                likelihood = px.log_prob(x_iw)
-
-                elbo = likelihood - beta * kl_divergence
-
-                # Importance sampling
-                elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
+                x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
 
                 loss = - torch.mean(elbo)
                 
                 loss.backward()
                 optimizer.step()
-                
-                likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                kl_divergences = [log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1) for kl_divergence in model.kl_divergences]
 
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
                 total_kl += kl_divergence.mean().item()
-                for i, kl in enumerate(kl_divergences):
-                    total_kls[i] += kl.mean().item()
+                for k, v in model.kl_divergences.items():
+                    total_kls[k] += v.mean().item()
 
                 ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
-                for i, kl in enumerate(kl_divergences):
-                    ex.log_scalar(f'(batch) KL on z{i}', kl.mean().item(), step=i_update)
+                for k, v in model.kl_divergences.items():
+                    ex.log_scalar(f'(batch) KL for {k}', v.mean().item(), step=i_update)
                 i_update += 1
                 
             total_elbo /= len(train_loader)
@@ -145,8 +130,8 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
             ex.log_scalar(f'log p(x|z)', total_likelihood, step=epoch)
             ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
             ex.log_scalar(f'ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
-            for i, kl in total_kls.items():
-                ex.log_scalar(f'KL on z_{i}', kl / len(train_loader), step=epoch)
+            for k, v in total_kls.items():
+                ex.log_scalar(f'KL for {k}', v / len(train_loader), step=epoch)
 
             print(f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}')
 

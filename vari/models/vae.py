@@ -1,14 +1,17 @@
+from collections import OrderedDict
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from torch.autograd import Variable
 from torch.nn import init
 
 from vari.layers import Identity, GaussianSample, BernoulliSample, GaussianMerge, GumbelSoftmax
 from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
+from vari.utilities import get_device, log_sum_exp
 
 
 class MultiLayeredPerceptron(nn.Module):
@@ -59,18 +62,21 @@ class DenseSequentialCoder(nn.Module):
             ])
         self.coder = nn.Sequential(*modules)
         self.distribution = distribution(self.h_dim[-1], z_dim)
+        self.initialize(activation)
+
+    def initialize(self, activation):
+        activation = activation.__class__.__name__.lower() if not activation == nn.LeakyReLU else 'leaky_relu'
+        gain = torch.nn.init.calculate_gain(activation, param=None)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal_(m.weight, gain=gain)
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
     def forward(self, x):
-        x = self.coder(x)
-        distribution = self.distribution(x)
+        h = self.coder(x)
+        distribution = self.distribution(h)
         return distribution
-
-
-class VariationalInferenceModel(nn.Module):
-    """Model that encodes the generative PGM: z_N -> z_N-1 -> ... -> z_1 --> x without amortized inference of z_:.
-    """
-    def __init__(self):
-        raise NotImplementedError()
 
 
 class VariationalAutoencoder(nn.Module):
@@ -86,17 +92,32 @@ class VariationalAutoencoder(nn.Module):
         self.sampler = sampler
         self.encoder = encoder
         self.decoder = decoder
-        self.kl_divergences = [0]
-        self.kl_divergence = 0
-        self.initialize()
+        self.kl_divergences = OrderedDict([('z', 0)])
+        
+    @property
+    def kl_divergence(self):
+        return sum(self.kl_divergences.values())
+    
+    def elbo(self, x, importance_samples=None, beta=1):
+        """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
+        and returns the ELBO, log-likelihood and the total KL divergence.
 
-    def initialize(self):
-        gain = torch.nn.init.calculate_gain('tanh', param=None)
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.xavier_normal_(m.weight, gain=gain)
-                if m.bias is not None:
-                    m.bias.data.zero_()
+        Args:
+            x (tensor): Inputs of shape [N, *, D] where N is batch and D is input dimension (potentially more than one)
+            importance_samples ([type], optional): [description]. Defaults to None.
+            beta (int, optional): [description]. Defaults to 1.
+        
+        Returns:
+            [type]: [description]
+        """
+        px = self.forward(x, importance_samples=importance_samples)
+        likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        elbo = likelihood - beta * self.kl_divergence
+        if importance_samples:
+            return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
+                   log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
+                   self.kl_divergence
+        return elbo, likelihood, self.kl_divergence
 
     def encode(self, x):
         return self.encoder(x)
@@ -104,23 +125,21 @@ class VariationalAutoencoder(nn.Module):
     def decode(self, z):
         return self.decoder(z)
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, importance_samples=None):
         """
-        Runs a data point through the model in order
-        to provide its reconstruction and q distribution
+        Runs a data point through the model in order to provide its reconstruction and q distribution
         parameters.
         :param x: input data
         :return: reconstructed input
         """
         # Latent inference q(z|a,x)
         pz = self.encoder(x)
-        z = pz.rsample()  # NOTE use sampler to sample MC and IW samples
+        z = pz.rsample(torch.Size([importance_samples])) if importance_samples else pz.rsample()
         # Generative p(x|z)
         px = self.decoder(z)
         # KL Divergence
-        self.kl_divergence = torch.distributions.kl_divergence(pz, self.encoder.distribution.get_prior())
+        self.kl_divergences['z'] = torch.distributions.kl_divergence(pz, self.encoder.distribution.get_prior())
         # self.kl_divergence = kld_gaussian_gaussian(z, (pz.mean, pz.variance))
-        self.kl_divergences[0] = self.kl_divergence
         return px
 
     def generate(self, n_samples=None, z=None, seed=None):
@@ -128,18 +147,12 @@ class VariationalAutoencoder(nn.Module):
         Generate samples from the generative model by either sampling `n_samples` from the prior p(z) or by decoding
         the given latent representation `z`. In both cases, setting `seed` can makes decoding reproducible.
         """
-        # if seed is not None:
-        #     torch.manual_seed(seed)
+        if seed is not None:
+            torch.manual_seed(seed)
         if z is not None:
             return self.decode(z)
         z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
         return self.decode(z)
-
-    def elbo(self, x, beta=1):
-        pz = self.encode(x)
-        z = pz.rsample()
-        px = self.decode(z)
-        return px.log_prob(x) - beta * self.kl_divergence
 
 
 class HierarchicalVariationalAutoencoder(nn.Module):
@@ -400,6 +413,13 @@ class LadderEncoder(nn.Module):
         x = self.linear(x)
         x = F.tanh(self.batchnorm(x))
         return x, self.sample(x)
+
+
+class VariationalInferenceModel(nn.Module):
+    """Model that encodes the generative PGM: z_N -> z_N-1 -> ... -> z_1 --> x without amortized inference of z_:.
+    """
+    def __init__(self):
+        raise NotImplementedError()
 
 
 class LadderDecoder(nn.Module):

@@ -66,12 +66,22 @@ def get_default_model_config_mnist(vae_type):
 
 def get_default_model_config_synthetic_2d(vae_type):
     if vae_type == 'VariationalAutoencoder':
+        x_dim, z_dim, h_dim = 2, 2, [64, 64, 32, 32]
         vae_kwargs = dict(
-            x_dim=2,
-            z_dim=2,
-            h_dim=[64, 64, 32, 32],
-            encoder_distribution=GaussianSample,
-            decoder_distribution=GaussianSample,
+            encoder=DenseSequentialCoder(
+                x_dim=x_dim,
+                z_dim=z_dim,
+                h_dim=h_dim,
+                distribution=GaussianSample,
+                activation=nn.LeakyReLU
+            ),
+            decoder=DenseSequentialCoder(
+                x_dim=z_dim,
+                z_dim=x_dim,
+                h_dim=list(reversed(h_dim)),
+                distribution=GaussianSample,
+                activation=nn.LeakyReLU
+            )
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
         vae_kwargs = dict(

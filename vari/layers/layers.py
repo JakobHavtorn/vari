@@ -36,9 +36,7 @@ class Distribution(nn.Module):
 
 
 class GaussianSample(Distribution):
-    """
-    Layer that parameterizes a Gaussian distribution.
-    """
+    """Layer that parameterizes a Gaussian distribution."""
     def __init__(self, in_features, out_features, scale_as='std'):
         super().__init__()
         assert scale_as in ['std', 'log_var']
@@ -56,14 +54,16 @@ class GaussianSample(Distribution):
     def get_prior(self, mu=None, scale=None):
         if mu is None and scale is None:
             return torch.distributions.Independent(torch.distributions.Normal(
-                torch.zeros(self.out_features).to(get_device()),
-                torch.ones(self.out_features).to(get_device())
+                loc=torch.zeros(self.out_features).to(get_device()),
+                scale=torch.ones(self.out_features).to(get_device())
             ), 1)
+            # NOTE The below allows using analytical KL divergence directly
             # return torch.distributions.MultivariateNormal(
             #     loc=torch.zeros(self.out_features).to(get_device()),
             #     covariance_matrix=torch.eye(self.out_features).to(get_device())
             # )
         return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
+        # NOTE The below allows using analytical KL divergence directly
         # cov = torch.diag_embed(scale ** 2)
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
         
@@ -78,6 +78,7 @@ class GaussianSample(Distribution):
 
 
 class BernoulliSample(Distribution):
+    """Layer that parameterizes a Bernoulli distribution."""
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
@@ -105,8 +106,11 @@ class ContinuousBernoulliSample(Distribution):
         )
         
     def forward(self, x):
+        raise NotImplementedError()
+        # TODO Need to sublcass torch.distributions.Bernoulli to change log_prob and entropy with the normalizing
+        # constant
         p = self.p(x)
-        return p, (p,)
+        return torch.distributions.Independent(torch.distributions.Bernoulli(probs=p), 1)
     
     def log_likelihood(self, x, p):
         return log_continuous_bernoulli(x, p)
