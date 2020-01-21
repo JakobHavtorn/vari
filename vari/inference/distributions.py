@@ -27,12 +27,14 @@ class DiagonalGaussian(Distributon):
     def __init__(self, mu, sd):
         self.mu = mu
         self.sd = sd
-        
+
+    @property
     def event_shape(self):
-        return torch.Size(self.mu.shape[1:])
-    
+        return torch.Size([self.mu.shape[-1]])
+
+    @property
     def batch_shape(self):
-        return torch.Size(self.mu.shape[0])
+        return torch.Size(self.mu.shape[:-1])
 
     def rsample(self, sample_shape=None):
         if sample_shape is None:
@@ -62,6 +64,14 @@ class DiagonalGaussian(Distributon):
 class Bernoulli(Distributon):
     def __init__(self, p):
         self.probs = p
+
+    @property
+    def event_shape(self):
+        return torch.Size([self.probs.shape[-1]])
+
+    @property
+    def batch_shape(self):
+        return torch.Size(self.probs.shape[:-1])
 
     def sample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)
