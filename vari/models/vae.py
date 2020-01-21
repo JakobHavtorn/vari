@@ -64,7 +64,7 @@ class DenseSequentialCoder(nn.Module):
         self.initialize(activation())
 
     def initialize(self, activation):
-        activation = activation.__class__.__name__.lower() if not activation == nn.LeakyReLU else 'leaky_relu'
+        activation = activation.__class__.__name__.lower() if not isinstance(activation, nn.LeakyReLU) else 'leaky_relu'
         gain = torch.nn.init.calculate_gain(activation, param=None)
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -109,7 +109,7 @@ class VariationalAutoencoder(nn.Module):
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples)
-        likelihood = px.log_prob(x.view(-1, x.shape[-1]))
+        likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
         if importance_samples:
             return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
@@ -184,7 +184,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         """
         qz = self.encode(x, importance_samples=importance_samples)
         px = self.decode(qz, copy_latents=copy_latents)
-        likelihood = px.log_prob(x.view(-1, x.shape[-1]))
+        likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
         if importance_samples:
             return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \

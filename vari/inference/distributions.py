@@ -18,21 +18,27 @@ def atanh(x):
 
 
 class Distributon():
-    def sample(self, shape=None):
+    def sample(self, sample_shape=None):
         with torch.no_grad():
-            return self.rsample(shape)
+            return self.rsample(sample_shape)
 
 
 class DiagonalGaussian(Distributon):
     def __init__(self, mu, sd):
         self.mu = mu
         self.sd = sd
+        
+    def event_shape(self):
+        return torch.Size(self.mu.shape[1:])
+    
+    def batch_shape(self):
+        return torch.Size(self.mu.shape[0])
 
-    def rsample(self, shape=None):
-        if shape is None:
+    def rsample(self, sample_shape=None):
+        if sample_shape is None:
             epsilon = torch.randn_like(self.mu, requires_grad=False, device=self.mu.device)
         else:
-            epsilon = torch.randn((*shape, *self.mu.shape), requires_grad=False, device=self.mu.device)
+            epsilon = torch.randn((*sample_shape, *self.mu.shape), requires_grad=False, device=self.mu.device)
         sample = self.mu.addcmul(self.sd, epsilon)
         return sample
 
@@ -55,12 +61,24 @@ class DiagonalGaussian(Distributon):
 
 class Bernoulli(Distributon):
     def __init__(self, p):
-        self.p = p
+        self.probs = p
+
+    def sample(self, sample_shape=torch.Size()):
+        shape = self._extended_shape(sample_shape)
+        with torch.no_grad():
+            return torch.bernoulli(self.probs.expand(shape))
         
-    def sample(self):
-        epsilon = torch.rand_like(mu, requires_grad=False, device=self.mu.device)
-        sample = torch.FloatTensor(self.p > epsilon)
-        return sample
+    def log_prob(self, x):
+        log_pdf = (p + eps).log() * x + (1 - p + eps).log() * (1 - x)
+        torch.sum(log_pdf, dim=-1)
+
+    @property
+    def mean(self):
+        return self.probs
+
+    @property
+    def variance(self):
+        return self.probs * (1 - self.probs)
 
 
 def log_standard_gaussian(x):
