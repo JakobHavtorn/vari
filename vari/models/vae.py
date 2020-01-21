@@ -9,6 +9,7 @@ from torch.nn import init
 from vari.layers import Identity, GaussianSample, BernoulliSample, GaussianMerge, GumbelSoftmax
 from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
+from vari.utilities import log_sum_exp
 
 
 class MultiLayeredPerceptron(nn.Module):
@@ -42,7 +43,7 @@ class DenseSequentialCoder(nn.Module):
         given by the number of neurons on the form
         [input_dim, [hidden_dims], latent_dim].
     """
-    def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, sample_layer=GaussianSample):
+    def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, distribution=GaussianSample):
         super().__init__()
 
         self.x_dim = x_dim
@@ -55,12 +56,55 @@ class DenseSequentialCoder(nn.Module):
 
         self.hidden = nn.ModuleList(linear_layers)
         self.activations = nn.ModuleList(activations)
-        self.sample = sample_layer(self.h_dim[-1], z_dim)
+        self.distribution = distribution(self.h_dim[-1], z_dim)
 
     def forward(self, x):
         for layer, activation in zip(self.hidden, self.activations):
             x = activation(layer(x))
-        return self.sample(x)
+        return self.distribution(x)
+    
+# class DenseSequentialCoder(nn.Module):
+#     """
+#     Inference network
+#     Attempts to infer the probability distribution
+#     p(z|x) from the data by fitting a variational
+#     distribution q_φ(z|x). Returns the two parameters
+#     of the distribution (µ, log σ²).
+#     :param dims: dimensions of the networks
+#         given by the number of neurons on the form
+#         [input_dim, [hidden_dims], latent_dim].
+#     """
+#     def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, distribution=GaussianSample):
+#         super().__init__()
+
+#         self.x_dim = x_dim
+#         self.z_dim = z_dim
+#         self.h_dim = [h_dim] if isinstance(h_dim, int) else h_dim
+
+#         dims = [x_dim, *self.h_dim]
+#         modules = []
+#         for i in range(1, len(dims)):
+#             modules.extend([
+#                 nn.Linear(dims[i-1], dims[i]),
+#                 activation(),
+#             ])
+#         self.coder = nn.Sequential(*modules)
+#         self.distribution = distribution(self.h_dim[-1], z_dim)
+#         self.initialize(activation())
+
+#     def initialize(self, activation):
+#         activation = activation.__class__.__name__.lower() if not isinstance(activation, nn.LeakyReLU) else 'leaky_relu'
+#         gain = torch.nn.init.calculate_gain(activation, param=None)
+#         for m in self.modules():
+#             if isinstance(m, nn.Linear):
+#                 init.xavier_normal_(m.weight, gain=gain)
+#                 if m.bias is not None:
+#                     m.bias.data.zero_()
+
+#     def forward(self, x):
+#         h = self.coder(x)
+#         distribution = self.distribution(h)
+#         return distribution
     
     
 class VariationalInferenceModel(nn.Module):
@@ -78,21 +122,11 @@ class VariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer=GaussianSample, decoder_sample_layer=GaussianSample, activation=nn.Tanh, encoder=None, decoder=None):
+    def __init__(self, encoder, decoder):
         super().__init__()
 
-        self.x_dim = x_dim  # if isinstance(x_dim, int) else np.prod(x_dim)  # The dim or flatten
-        self.z_dim = z_dim
-        self.h_dim = h_dim
-
-        if encoder is not None:
-            self.encoder = encoder
-        else:
-            self.encoder = DenseSequentialCoder(x_dim=x_dim, z_dim=z_dim, h_dim=h_dim, sample_layer=encoder_sample_layer, activation=activation)
-        if decoder is not None:
-            self.decoder = decoder
-        else:
-            self.decoder = DenseSequentialCoder(x_dim=z_dim, z_dim=x_dim, h_dim=list(reversed(h_dim)), sample_layer=decoder_sample_layer, activation=activation)
+        self.encoder = encoder
+        self.decoder = decoder
         self.kl_divergences = [0]
         self.kl_divergence = 0
         self.initialize()
@@ -141,7 +175,7 @@ class VariationalAutoencoder(nn.Module):
         return self.decode(z)
 
     def log_likelihood(self, x, *px_args):
-        return self.decoder.sample.log_likelihood(x, *px_args)
+        return self.decoder.distribution.log_likelihood(x, *px_args)
 
     def elbo(self, x):
         px, px_args = self.forward(x)
@@ -156,28 +190,15 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, x_dim, z_dim, h_dim, encoder_sample_layer, decoder_sample_layer, activation=nn.Tanh):
+    def __init__(self, encoder, decoder):
         super().__init__()
 
-        self.x_dim = x_dim
-        self.z_dim = z_dim
-        self.h_dim = h_dim
-        
-        assert len(z_dim) <= 2, 'Does not support more than two latents ATM'
+        assert len(encoder) <= 2, 'Does not support more than two latents ATM'
 
-        enc_dims = [x_dim, *z_dim]
-        dec_dims = enc_dims[::-1]  # reverse
-        h_dim_rev = h_dim[::-1]  # reverse
+        self.encoder = encoder
+        self.decoder = decoder
 
-        encoder_layers = [DenseSequentialCoder(x_dim=enc_dims[i - 1], z_dim=enc_dims[i], h_dim=h_dim[i - 1],
-                                               sample_layer=encoder_sample_layer[i - 1], activation=activation) for i in range(1, len(enc_dims))]
-        decoder_layers = [DenseSequentialCoder(x_dim=dec_dims[i - 1], z_dim=dec_dims[i], h_dim=h_dim_rev[i - 1],
-                                               sample_layer=decoder_sample_layer[i - 1], activation=activation) for i in range(1, len(dec_dims))]
-
-        self.encoder = nn.ModuleList(encoder_layers)
-        self.decoder = nn.ModuleList(decoder_layers)
-
-        self.kl_divergences = [0] * len(z_dim)
+        self.kl_divergences = [0] * len(encoder)
         self.kl_divergence = 0
         self.initialize()
 
@@ -188,6 +209,33 @@ class HierarchicalVariationalAutoencoder(nn.Module):
                 init.xavier_normal_(m.weight, gain=gain)
                 if m.bias is not None:
                     m.bias.data.zero_()
+                    
+    def elbo(self, x, importance_samples=None, beta=1, copy_latents=None):
+        """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
+        and returns the ELBO, log-likelihood and the total KL divergence.
+        Args:
+            x (tensor): Inputs of shape [N, *, D] where N is batch and D is input dimension (potentially more than one)
+            importance_samples ([type], optional): [description]. Defaults to None.
+            beta (int, optional): [description]. Defaults to 1.
+        
+        Returns:
+            [type]: [description]
+        """
+        x_iw = x.repeat(1, importance_samples).view(-1, *x.shape[1:])  # (B * IW, *x.shape[1:])
+        qz = self.encode(x_iw)
+        # px = self.decode(qz, copy_latents=copy_latents)
+        x_reconstruct, px = self.decode(qz, copy_latents=copy_latents)
+        # x_re, px = self.forward(x_iw)
+        # likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        likelihood = self.log_likelihood(x_iw, *px)   #log_gaussian(x, *px)
+        elbo = likelihood - beta * self.kl_divergence
+        self.kl_divergences = [log_sum_exp(kl.view(-1, importance_samples, 1), axis=1,
+                                           sum_op=torch.mean).flatten() for kl in self.kl_divergences]
+        if importance_samples:
+            return log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).flatten(), \
+                   log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).flatten(), \
+                   log_sum_exp(self.kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).flatten()
+        return elbo, likelihood, self.kl_divergence
 
     def encode(self, x):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
@@ -306,7 +354,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         return z, qz_args
     
     def log_likelihood(self, x, *px_args):
-        return self.decoder[-1].sample.log_likelihood(x, *px_args)
+        return self.decoder[-1].distribution.log_likelihood(x, *px_args)
 
 
 class AuxilliaryVariationalAutoencoder(nn.Module):
@@ -385,7 +433,7 @@ class AuxilliaryVariationalAutoencoder(nn.Module):
         return self.decode(z)
     
     def log_likelihood(self, x, *px_args):
-        return self.decoder.sample.log_likelihood(x, *px_args)
+        return self.decoder.distribution.log_likelihood(x, *px_args)
 
 
 class LadderEncoder(nn.Module):
@@ -514,7 +562,7 @@ class LadderVariationalAutoencoder(nn.Module):
         return self.reconstruction(z)
     
     def log_likelihood(self, x, px_args):
-        return self.decoder.sample.log_likelihood(x, px_args)
+        return self.decoder.distribution.log_likelihood(x, px_args)
 
 
 # NOTE First go at implementing variable number of hidden layers between stochastic variables

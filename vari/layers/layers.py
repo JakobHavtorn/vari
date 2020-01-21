@@ -18,13 +18,13 @@ class Identity(nn.Module):
         return x
 
 
-class Lambda(nn.Module):
-    def __init__(self, lambd):
+class AddConstant(nn.Module):
+    def __init__(self, constant):
         super().__init__()
-        self.lambd = lambd
-
+        self.constant = constant
+        
     def forward(self, x):
-        return self.lambd(x)
+        return x + self.constant
 
 
 class GaussianReparameterization(nn.Module):
@@ -56,7 +56,7 @@ class GaussianSample(GaussianReparameterization):
         scale = [nn.Linear(in_features, out_features)]
         if scale_as == 'std':
             scale.append(nn.Softplus())
-            scale.append(Lambda(lambda x: x + 1e-8))
+            scale.append(AddConstant(1e-8))
         self.scale = nn.Sequential(*scale)
 
     def forward(self, x):

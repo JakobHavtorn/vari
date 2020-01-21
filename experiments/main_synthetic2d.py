@@ -90,37 +90,23 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
 
                 optimizer.zero_grad()
                 
-                # Importance sampling
-                x_iw = x.repeat(1, importance_samples).view(-1, x.shape[1])
-
-                px, (px_mu, px_sigma) = model(x_iw)
-                kl_divergence = model.kl_divergence
-                likelihood = model.log_likelihood(x_iw, *(px_mu, px_sigma))
-
-                elbo = likelihood - beta * kl_divergence
-                elbo = log_sum_exp(elbo.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-
+                elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=1)
                 loss = - torch.mean(elbo)
 
                 loss.backward()
                 optimizer.step()
 
-                # Importance sampling
-                kl_divergence = log_sum_exp(kl_divergence.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                likelihood = log_sum_exp(likelihood.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  # (B, 1, 1)
-                kl_divergences = [log_sum_exp(kl.view(-1, importance_samples, 1), axis=1, sum_op=torch.mean).view(-1, 1)  for kl in model.kl_divergences]
-
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
                 total_kl += kl_divergence.mean().item()
-                for i, kl in enumerate(kl_divergences):
+                for i, kl in enumerate(model.kl_divergences):
                     total_kls[i] += kl.mean().item()
 
                 ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
-                for i, kl in enumerate(kl_divergences):
+                for i, kl in enumerate(model.kl_divergences):
                     ex.log_scalar(f'(batch) KL on z{i}', kl.mean().item(), step=i_update)
                 i_update += 1
                 
