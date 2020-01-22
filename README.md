@@ -10,6 +10,9 @@
 
 - Add better stopping/saving criteria
 
+- Improve experiment setups with configuration files that can be read
+
+
 ## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)
 Diagonal Gaussian KL divergences are not implemented in PyTorch ATM. This can be easily achieved by:
 
@@ -24,7 +27,7 @@ def _kl_independent_independent(p, q):
     return _sum_rightmost(result, p.reinterpreted_batch_ndims)
 ```
 
-in `torch.distributions.kl` with 
+in `torch.distributions.kl` with
 
 ```python
 import numbers

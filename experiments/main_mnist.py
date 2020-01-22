@@ -16,8 +16,8 @@ import vari.models.vae
 import vari.datasets
 
 from vari.models import get_default_model_config
-from vari.utilities import get_device, log_sum_exp, summary
-from vari.inference import log_gaussian, DeterministicWarmup
+from vari.utilities import get_device, summary
+from vari.inference import DeterministicWarmup
 
 import IPython
 
@@ -175,6 +175,8 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                     ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
                     ex.log_scalar(f'[TEST] IW={iws} KL(q(z|x)||p(z))', total_kl, step=epoch)
                     ex.log_scalar(f'[TEST] IW={iws} ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
+                    for k, v in total_kls.items():
+                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(train_loader), step=epoch)
 
                     s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
                     if len(total_kls) > 1:

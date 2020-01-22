@@ -14,8 +14,8 @@ import vari.models.vae
 import vari.datasets
 
 from vari.models import get_default_model_config
-from vari.utilities import get_device, log_sum_exp, summary
-from vari.inference import log_gaussian, DeterministicWarmup
+from vari.utilities import get_device, summary
+from vari.inference import DeterministicWarmup
 
 import IPython
 
@@ -97,10 +97,13 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
 
                 optimizer.zero_grad()
 
-                # import IPython
-                # IPython.embed()
                 x = x.view(x.shape[0], np.prod(x.shape[1:]))
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
+
+                # print(i_update)
+                # if i_update > 1000:
+                #     import IPython
+                #     IPython.embed()
 
                 loss = - torch.mean(elbo)
                 loss.backward()
@@ -137,6 +140,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                     s += f' | KL {k} {v / len(train_loader):2.4f}'
             print(s)
 
+
             if epoch % 10 == 0 and total_elbo > best_elbo and deterministic_warmup.is_done:
                 best_elbo = total_elbo
                 best_kl = total_kl
@@ -147,12 +151,10 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
                 
                 model.eval()
-                for iws in [1, 10, 100]:
+                for iws in [1, importance_samples, 5000]:
                     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
                     for b, (x, _) in enumerate(train_loader):
                         x = x.to(device)
-
-                        optimizer.zero_grad()
 
                         x = x.view(x.shape[0], np.prod(x.shape[1:]))
                         elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
@@ -163,17 +165,21 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                         for k, v in model.kl_divergences.items():
                             total_kls[k] += v.mean().item()
 
-                    total_elbo /= len(train_loader)
-                    
-                    ex.log_scalar(f'[TEST] ELBO log p(x)', total_elbo, step=epoch)
-                    ex.log_scalar(f'[TEST] log p(x|z)', total_likelihood, step=epoch)
-                    ex.log_scalar(f'[TEST] KL(q(z|x)||p(z))', total_kl, step=epoch)
-                    ex.log_scalar(f'[TEST] ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
-            
+                    total_elbo /= len(test_loader)
+                    total_likelihood /= len(test_loader)
+                    total_kl /= len(test_loader)
+
+                    ex.log_scalar(f'[TEST] IW={iws} ELBO log p(x)', total_elbo, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} KL(q(z|x)||p(z))', total_kl, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
+                    for k, v in total_kls.items():
+                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(train_loader), step=epoch)
+
                     s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
                     if len(total_kls) > 1:
                         for k, v in total_kls.items():
-                            s += f' | KL {k} {v:2.4f}'
+                            s += f' | KL {k} {v / len(test_loader):2.4f}'
                     print(s)
             
             epoch += 1

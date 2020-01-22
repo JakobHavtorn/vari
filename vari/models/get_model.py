@@ -100,9 +100,9 @@ def get_default_model_config_synthetic_2d(vae_type):
             )
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
-        x_dim, z_dim, h_dim = 2, [2, 2], [[64, 64], [32, 32]]
-        encoder_distribution = [GaussianLayer, GaussianLayer]
-        decoder_distribution = [GaussianLayer, GaussianLayer]
+        x_dim, z_dim, h_dim = 2, [2, 2, 2], [[64, 64], [32, 32], [16, 16]]
+        encoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer]
+        decoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer]
 
         enc_dims = [x_dim, *z_dim]
         dec_dims = enc_dims[::-1]  # reverse

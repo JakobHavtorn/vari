@@ -91,8 +91,7 @@ class DenseSequentialCoder(nn.Module):
             tensor: Tensor of shape [B, product(self.x_dim)] where the feature dimensions have been flattened.
         """
         h = self.coder(x)
-        distribution = self.distribution(h)
-        return distribution
+        return self.distribution(h)
 
 
 class VariationalAutoencoder(nn.Module):
@@ -127,6 +126,8 @@ class VariationalAutoencoder(nn.Module):
         Returns:
             [type]: [description]
         """
+        # import IPython
+        # IPython.embed()
         px = self.forward(x, importance_samples=importance_samples, analytical_kl=analytical_kl)
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
@@ -136,27 +137,29 @@ class VariationalAutoencoder(nn.Module):
         return elbo, likelihood, self.kl_divergence
 
     def reduce_importance_samples(self, elbo, likelihood, kl_divergence):
-        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0).flatten()) for k, kl in self.kl_divergences.items()])
+        # self.kl_divergences = OrderedDict([(k, kl.mean(axis=0) for k, kl in self.kl_divergences.items()])
+        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
+        self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
-                likelihood.mean(axis=0).flatten(), \
-                self.kl_divergence
+               log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
+               self.kl_divergence
 
     def encode(self, x, importance_samples=1):
         qz = self.encoder(x)
-        z = qz.rsample(torch.Size([importance_samples])) if importance_samples else qz.rsample()
+        z = qz.rsample(torch.Size([importance_samples]))
         return z, qz
 
     def decode(self, z):
         return self.decoder(z)
 
-    def forward(self, x, y=None, importance_samples=None, analytical_kl=False):
+    def forward(self, x, y=None, importance_samples=1, analytical_kl=False):
         """
         Runs a data point through the model in order to provide its reconstruction and q distribution
         parameters.
         :param x: input data
         :return: reconstructed input
         """
-        assert not analytical_kl or (analytical_kl and (importance_samples is None or importance_samples == 1)), \
+        assert not analytical_kl or (analytical_kl and importance_samples == 1), \
             'KL is not analytically computable with importance sampling'
 
         z, qz = self.encode(x, importance_samples=importance_samples)  # Latent inference q(z|x)
@@ -193,14 +196,14 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.n_layers = len(encoder)
-        assert self.n_layers <= 2, 'Does not support more than two layers ATM'
+        assert self.n_layers == 3, 'Does not support more than two layers ATM'
         self.kl_divergences = OrderedDict([(f'z{i}', 0) for i in range(1, self.n_layers)])
 
     @property
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=None, beta=1, reduce_importance_samples=True, copy_latents=None):
+    def elbo(self, x, importance_samples=1, beta=1, reduce_importance_samples=True, copy_latents=None):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -214,7 +217,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         """
         qz = self.encode(x, importance_samples=importance_samples)
         px = self.decode(qz, copy_latents=copy_latents)
-        likelihood = px.log_prob(x)
+        likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
 
         if reduce_importance_samples:
@@ -222,19 +225,21 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         return elbo, likelihood, self.kl_divergence
 
     def reduce_importance_samples(self, elbo, likelihood, kl_divergence):
-        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0).flatten()) for k, kl in self.kl_divergences.items()])
+        # self.kl_divergences = OrderedDict([(k, kl.mean(axis=0) for k, kl in self.kl_divergences.items()])
+        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
+        self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
-                likelihood.mean(axis=0).flatten(), \
-                self.kl_divergence
+               log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
+               self.kl_divergence
 
-    def encode(self, x, importance_samples=None):
+    def encode(self, x, importance_samples=1):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
         """
         latents = OrderedDict()
         z = x
         for i, encoder in enumerate(self.encoder, start=1):
             qz = encoder(z)
-            z = qz.rsample(torch.Size([importance_samples])) if i==1 and importance_samples else qz.rsample()
+            z = qz.rsample(torch.Size([importance_samples])) if i==1 else qz.rsample()
             latents[f'z{i}'] = (z, qz)
         return latents
 
@@ -257,26 +262,39 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         # TODO Generalize to L layers
         # TODO Remove references to analytical KL divergence
         # Top most latent has unconditional prior and is always required to be given (i.e. copied)
-        qz2_samples, qz2 = latents[f'z{2}']
+        qz3_samples, qz3 = latents[f'z{3}']
         if copy_latents[-1]:
-            # self.kl_divergences[f'z{2}'] = torch.distributions.kl_divergence(qz2, self.encoder[0].distribution.get_prior())
-            self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - self.encoder[1].distribution.get_prior().log_prob(qz2_samples)
-            pz1 = self.decoder[0](qz2_samples)
+            # self.kl_divergences[f'z{3}'] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
+            self.kl_divergences[f'z{3}'] = qz3.log_prob(qz3_samples) - self.encoder[2].distribution.get_prior().log_prob(qz3_samples)
+            pz2 = self.decoder[0](qz3_samples)
         else:
             raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
 
+        qz2_samples, qz2 = latents[f'z{2}']
+        if copy_latents[-2]:
+            # self.kl_divergences[f'z{1}'] = kld_gaussian_gaussian(qz2_samples, (qz2.mean, qz2.stddev), (pz2.mean, pz2.stddev))
+            # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz2, pz2)
+            self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - pz2.log_prob(qz2_samples)
+            pz1 = self.decoder[1](qz2_samples)
+        else:
+            self.kl_divergences[1] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
+                                      kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
+            # self.kl_divergence += self.kl_divergences[1]
+            pz2_samples = pz2.rsample()
+            px = self.decoder[1](pz2_samples)
+            
         qz1_samples, qz1 = latents[f'z{1}']
         if copy_latents[-2]:
             # self.kl_divergences[f'z{1}'] = kld_gaussian_gaussian(qz1_samples, (qz1.mean, qz1.stddev), (pz1.mean, pz1.stddev))
             # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
             self.kl_divergences[f'z{1}'] = qz1.log_prob(qz1_samples) - pz1.log_prob(qz1_samples)
-            px = self.decoder[1](qz1_samples)
+            px = self.decoder[2](qz1_samples)
         else:
             self.kl_divergences[1] = (kld_gaussian_gaussian(qz1_samples, qz1, p_param=pz1) +
                                       kld_gaussian_gaussian(qz1_samples, pz1, p_param=qz1)) / 2
             # self.kl_divergence += self.kl_divergences[1]
             pz1_samples = pz1.rsample()
-            px = self.decoder[1](pz1_samples)
+            px = self.decoder[2](pz1_samples)
 
         return px
         
