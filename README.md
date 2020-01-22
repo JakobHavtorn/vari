@@ -2,26 +2,15 @@
 
 
 
-## Improvements
+## Improvement projects
 
-- Return value from stochastic sampling layers like GaussianLayer and BernoulliSample could be the `torch.distributions` distribution representing that.
+- Improve generality of code in case of convolutional coders
 
-  - This allows using `.rsample()`, `.log_prob()` and `torch.distributions.kl.kl_divergence()` methods instead of implementing from scratch.
-  - It also makes the API of the encoder and decoder the same despite the encoding/decoding distribution.
+- Add evaluators to make logging on metrics easier and take up less code in experiment files
 
-- Move ELBO computation into model with (no_grad, importance_samples) as options
+- Add better stopping/saving criteria
 
-- Define encoder and decoder outside VAE model and pass as arguments to enable convolutional coders
-
-- Share some experiment code across experiments (like getting model and datasets from names)
-
-- Refactor minor things
-
-  - Make parameters be a Sequence model in the BernoulliSample class
-
-- (Implement importance sampling as sampling additional samples from the prior compared to input and computing likelihood on repeated inputs (instead of forward passing copies))
-
-## Implement KL divergence for Independent distributions (Diagonal Gaussian)
+## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)
 Diagonal Gaussian KL divergences are not implemented in PyTorch ATM. This can be easily achieved by:
 
 Replace 
