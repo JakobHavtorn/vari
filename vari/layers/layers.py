@@ -31,25 +31,48 @@ class AddConstant(nn.Module):
         return f'AddConstant({self.constant})'
 
 
-class Distribution(nn.Module):
-    prior = None
-
-
-class GaussianSample(Distribution):
-    """Layer that parameterizes a Gaussian distribution."""
-    def __init__(self, in_features, out_features, scale_as='std'):
+class Clamp(nn.Module):
+    def __init__(self, min, max):
         super().__init__()
-        assert scale_as in ['std', 'log_var']
+        self.min = min
+        self.max = max
+        
+    def forward(self, tensor):
+        return tensor.clamp(min=self.min, max=self.max)
+
+    def __repr__(self):
+        return f'Clamp({self.min, self.max})'
+
+
+class Distribution(nn.Module):
+    pass
+
+
+class GaussianLayer(Distribution):
+    """Layer that parameterizes a Gaussian distribution by its mean and standard deviation
+    
+    The layer outputs a mean with range [-inf, inf] parameterized by a linear transformation of the input without
+    nonlinearity and a standard deviation with range [0, inf] parameterized
+    range []."""
+    def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10):
+        super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.scale_as = scale_as
 
         self.mu = nn.Linear(in_features, out_features)
-        scale = [nn.Linear(in_features, out_features)]
-        if scale_as == 'std':
-            scale.append(nn.Softplus())
-            scale.append(AddConstant(1e-8))
-        self.scale = nn.Sequential(*scale)
+        self.scale = nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.Softplus(),
+            Clamp(min=min_sd, max=max_sd)
+        )
+        self.initialize()
+    
+    def initialize(self):
+        # Gain is that of ReLU for scale since it's close to the SoftPlus
+        gain = nn.init.calculate_gain('relu')
+        nn.init.xavier_normal_(self.scale[0].weight, gain=gain)
+        # For the mean there is no nonlinearity so we simply take gain to be 1
+        nn.init.xavier_normal_(self.mu.weight, gain=1.)
 
     def get_prior(self, mu=None, scale=None):
         if mu is None and scale is None:
@@ -57,27 +80,26 @@ class GaussianSample(Distribution):
                 loc=torch.zeros(self.out_features).to(get_device()),
                 scale=torch.ones(self.out_features).to(get_device())
             ), 1)
-            # NOTE The below allows using analytical KL divergence directly
+            # NOTE The below allows using analytical KL divergence directly without modifications to torch
             # return torch.distributions.MultivariateNormal(
             #     loc=torch.zeros(self.out_features).to(get_device()),
             #     covariance_matrix=torch.eye(self.out_features).to(get_device())
             # )
         return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
-        # NOTE The below allows using analytical KL divergence directly
+        # NOTE The below allows using analytical KL divergence directly without modifications to torch
         # cov = torch.diag_embed(scale ** 2)
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
-        
 
     def forward(self, x):
         mu = self.mu(x)
         scale = self.scale(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
-        # NOTE The below allows using analytical KL divergence directly
+        # NOTE The below allows using analytical KL divergence directly without modifications to torch
         # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
 
 
-class BernoulliSample(Distribution):
+class BernoulliLayer(Distribution):
     """Layer that parameterizes a Bernoulli distribution."""
     def __init__(self, in_features, out_features):
         super().__init__()
@@ -88,13 +110,29 @@ class BernoulliSample(Distribution):
             nn.Linear(in_features, out_features),
             nn.Sigmoid()
         )
+        self.initialize()
+    
+    def initialize(self):
+        gain = nn.init.calculate_gain('sigmoid')
+        nn.init.xavier_normal_(self.p[0].weight, gain=gain)
 
     def forward(self, x):
         p = self.p.forward(x)
         return torch.distributions.Independent(torch.distributions.Bernoulli(probs=p), 1)
 
+
+# class ContinuousBernoulli(torch.distributions.Bernoulli):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+
+#     def log_prob(self, value):
+#         if self._validate_args:
+#             self._validate_sample(value)
+#         logits, value = broadcast_all(self.logits, value)
+#         return -binary_cross_entropy_with_logits(logits, value, reduction='none')
     
-class ContinuousBernoulliSample(Distribution):
+    
+class ContinuousBernoulliLayer(Distribution):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
@@ -128,16 +166,14 @@ class GaussianMerge(Distribution):
         super().__init__(in_features, out_features)
 
     def forward(self, z, mu1, log_var1):
-        raise NotImplementedError('Not yet adapted to GaussianSample layer using Softplus to return standard deviation')
-        # Calculate precision of each distribution
-        # (inverse variance)
+        raise NotImplementedError('Not yet adapted to GaussianLayer layer using Softplus to return standard deviation')
+        # Calculate precision of each distribution (inverse variance)
         mu2 = self.mu(z)
         #log_var2 = F.softplus(self.log_var(z))
         log_var2 = self.log_var(z)
         precision1, precision2 = (1 / torch.exp(log_var1), 1 / torch.exp(log_var2))
 
-        # Merge distributions into a single new
-        # distribution
+        # Merge distributions into a single new distribution
         mu = ((mu1 * precision1) + (mu2 * precision2)) / (precision1 + precision2)
 
         var = 1 / (precision1 + precision2)
