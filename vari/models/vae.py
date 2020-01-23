@@ -149,7 +149,11 @@ class VariationalAutoencoder(nn.Module):
         z = qz.rsample(torch.Size([importance_samples]))
         return z, qz
 
-    def decode(self, z):
+    def decode(self, z, qz):
+        if analytical_kl:
+            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.get_prior())[None, ...]
+        else:
+            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.get_prior().log_prob(z)
         return self.decoder(z)
 
     def forward(self, x, y=None, importance_samples=1, analytical_kl=False):
@@ -163,11 +167,7 @@ class VariationalAutoencoder(nn.Module):
             'KL is not analytically computable with importance sampling'
 
         z, qz = self.encode(x, importance_samples=importance_samples)  # Latent inference q(z|x)
-        px = self.decode(z)  # Generative p(x|z)
-        if analytical_kl:
-            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.get_prior())[None, ...]
-        else:
-            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.get_prior().log_prob(z)
+        px = self.decode(z, qz)  # Generative p(x|z)
         return px
 
     def generate(self, n_samples=None, z=None, seed=None):
@@ -196,7 +196,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.n_layers = len(encoder)
-        assert self.n_layers == 3, 'Does not support more than two layers ATM'
+        # assert self.n_layers == 3, 'Does not support more than two layers ATM'
         self.kl_divergences = OrderedDict([(f'z{i}', 0) for i in range(1, self.n_layers)])
 
     @property
@@ -225,12 +225,12 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         return elbo, likelihood, self.kl_divergence
 
     def reduce_importance_samples(self, elbo, likelihood, kl_divergence):
-        # self.kl_divergences = OrderedDict([(k, kl.mean(axis=0) for k, kl in self.kl_divergences.items()])
-        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
-        self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
-        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
-               log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
-               self.kl_divergence
+        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in self.kl_divergences.items()])
+        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), self.kl_divergence
+        # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
+        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
+        #        log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
+        #        self.kl_divergence
 
     def encode(self, x, importance_samples=1):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
@@ -251,115 +251,74 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             copy_latents (list of bool, optional): If not None must be a list that is True for each latent to copy from.
                                                    the encoder and False when using the generative sample.
                                                    Defaults to None in which case all latents are copied.
-        
+
         Returns:
             tuple: Tuple of samples and distribution parameters for input space [(x, (px_parameters)), ...]
         """
-        copy_latents = copy_latents if copy_latents is not None else [True] * len(latents)
-        assert len(copy_latents) == len(latents)
-        self.kl_divergences = OrderedDict([(f'z{i}', 0) for i in range(1, self.n_layers)])  # Reset
-
-        # TODO Generalize to L layers
-        # TODO Remove references to analytical KL divergence
-        # Top most latent has unconditional prior and is always required to be given (i.e. copied)
-        qz3_samples, qz3 = latents[f'z{3}']
-        if copy_latents[-1]:
-            # self.kl_divergences[f'z{3}'] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
-            self.kl_divergences[f'z{3}'] = qz3.log_prob(qz3_samples) - self.encoder[2].distribution.get_prior().log_prob(qz3_samples)
-            pz2 = self.decoder[0](qz3_samples)
-        else:
-            raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
-
-        qz2_samples, qz2 = latents[f'z{2}']
-        if copy_latents[-2]:
-            # self.kl_divergences[f'z{1}'] = kld_gaussian_gaussian(qz2_samples, (qz2.mean, qz2.stddev), (pz2.mean, pz2.stddev))
-            # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz2, pz2)
-            self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - pz2.log_prob(qz2_samples)
-            pz1 = self.decoder[1](qz2_samples)
-        else:
-            self.kl_divergences[1] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
-                                      kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
-            # self.kl_divergence += self.kl_divergences[1]
-            pz2_samples = pz2.rsample()
-            px = self.decoder[1](pz2_samples)
-            
-        qz1_samples, qz1 = latents[f'z{1}']
-        if copy_latents[-2]:
-            # self.kl_divergences[f'z{1}'] = kld_gaussian_gaussian(qz1_samples, (qz1.mean, qz1.stddev), (pz1.mean, pz1.stddev))
-            # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
-            self.kl_divergences[f'z{1}'] = qz1.log_prob(qz1_samples) - pz1.log_prob(qz1_samples)
-            px = self.decoder[2](qz1_samples)
-        else:
-            self.kl_divergences[1] = (kld_gaussian_gaussian(qz1_samples, qz1, p_param=pz1) +
-                                      kld_gaussian_gaussian(qz1_samples, pz1, p_param=qz1)) / 2
-            # self.kl_divergence += self.kl_divergences[1]
-            pz1_samples = pz1.rsample()
-            px = self.decoder[2](pz1_samples)
-
-        return px
-        
         # copy_latents = copy_latents if copy_latents is not None else [True] * len(latents)
-        # assert len(copy_latents) == len(latents)
+        top_z_index = len(self.encoder)
+        assert copy_latents is None or len(copy_latents) == len(latents), 'Specify for each latent whether to copy.'
+        assert copy_latents is None or copy_latents[f'z{top_z_index}'], 'Top latent must be copied from the encoder.'
+        self.kl_divergences = OrderedDict([(f'z{i}', 0) for i in range(1, self.n_layers)])  # Reset
+        
+        for z_index in range(top_z_index, 0, -1):  # [top_z_index, top_z_index - 1, ..., 1]
+            z_key = f'z{z_index}'
+            qz_samples, qz = latents[z_key]
+            if copy_latents is None or copy_latents[z_key]:  # Copy latents from layer below for decoding (and KL)
+                if z_index == top_z_index:  # At top we use prior for KL
+                    # self.kl_divergences[z_key] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
+                    self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
+                                                         self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
+                else:
+                    self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
+                pz = self.decoder[-z_index](qz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  q(z_{i}|z_{i-1}) or q(z_1|x)
+            else:
+                # TODO Compute the correct KL divergence term here
+                self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
+                # self.kl_divergences[z_key] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
+                #                                 kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
+                pz_samples = pz.rsample()
+                pz = self.decoder[-z_index](pz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  p(z_{i}|z_{i+1})
 
+        return pz  # Final pz is actually p(x|z)
+
+
+        # # TODO Generalize to L layers
+        # # TODO Remove references to analytical KL divergence
         # # Top most latent has unconditional prior and is always required to be given (i.e. copied)
-        # qz2_samples, (q_z2_mu, q_z2_sd) = latents[-1]
-        # if copy_latents[-1]:
-        #     self.kl_divergences[0] = kld_gaussian_gaussian(qz2_samples, (q_z2_mu, q_z2_sd))
-        #     self.kl_divergence = self.kl_divergences[0]
-        #     p_z1, (p_z1_mu, p_z1_sd) = self.decoder[0](qz2_samples)
+        # qz3_samples, qz3 = latents[f'z{3}']
+        # if copy_latents[2]:
+        #     # self.kl_divergences[f'z{3}'] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
+        #     self.kl_divergences[f'z{3}'] = qz3.log_prob(qz3_samples) - self.encoder[-1].distribution.get_prior().log_prob(qz3_samples)
+        #     pz2 = self.decoder[-3](qz3_samples)
         # else:
         #     raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
-    
-        # qz1_samples, (q_z1_mu, q_z1_sd) = latents[-2]
-        # if copy_latents[-2]:
-        #     self.kl_divergences[1] = kld_gaussian_gaussian(qz1_samples, (q_z1_mu, q_z1_sd), (p_z1_mu, p_z1_sd))
-        #     self.kl_divergence += self.kl_divergences[1]
-        #     x, px_args = self.decoder[1](qz1_samples)
-        # else:
-        #     self.kl_divergences[1] = (kld_gaussian_gaussian(qz1_samples, (q_z1_mu, q_z1_sd), p_param=(p_z1_mu, p_z1_sd)) +
-        #                               kld_gaussian_gaussian(qz1_samples, (p_z1_mu, p_z1_sd), p_param=(q_z1_mu, q_z1_sd))) / 2
-        #     # self.kl_divergence += self.kl_divergences[1]
-        #     x, px_args = self.decoder[1](p_z1)
 
-        # NOTE THE ABOVE CODE IN CASE WHERE IT IS IN A LOOP
-        # q_zi, (q_zi_mu, q_zi_sd) = latents[-2]
-        # if copy_latents[-2]:
-        #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), (p_zi_mu, p_zi_sd))
-        #     self.kl_divergence += self.kl_divergences[1]
-        #     p_zi, (p_zi_mu, p_zi_sd) = self.decoder[1](q_zi)
-        # else:
-        #     self.kl_divergences[1] = kld_gaussian_gaussian(q_zi, (q_zi_mu, q_zi_sd), p_param=(p_zi_mu, p_zi_sd), p_z=p_zi)
-        #     self.kl_divergence += self.kl_divergences[1]
-        #     p_zi, (p_zi_mu, p_zi_sd) = self.decoder[1](p_zi)
+        # qz2_samples, qz2 = latents[f'z{2}']
+        # if copy_latents[1]:
+        #     # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz2, pz2)
+        #     self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - pz2.log_prob(qz2_samples)
+        #     pz1 = self.decoder[-2](qz2_samples)
+        # # else:
+        # #     self.kl_divergences[f'z{2}'] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
+        # #                               kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
+        # #     # self.kl_divergence += self.kl_divergences[2]
+        # #     pz2_samples = pz2.rsample()
+        # #     px = self.decoder[2](pz2_samples)
+            
+        # qz1_samples, qz1 = latents[f'z{1}']
+        # if copy_latents[0]:
+        #     # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
+        #     self.kl_divergences[f'z{1}'] = qz1.log_prob(qz1_samples) - pz1.log_prob(qz1_samples)
+        #     px = self.decoder[-1](qz1_samples)
+        # # else:
+        # #     self.kl_divergences[f'z{1}'] = (kld_gaussian_gaussian(qz1_samples, qz1, p_param=pz1) +
+        # #                                    kld_gaussian_gaussian(qz1_samples, pz1, p_param=qz1)) / 2
+        # #     # self.kl_divergence += self.kl_divergences[1]
+        # #     pz1_samples = pz1.rsample()
+        # #     px = self.decoder[3](pz1_samples)
 
-
-
-        # Top most latent has unconditional prior and is always required to be given (i.e. copied)
-        # q_z2, (q_z2_mu, q_z2_sd) = latents[-1]
-        # self.kl_divergences[0] = kld_gaussian_gaussian(q_z2, (q_z2_mu, q_z2_sd))
-        # self.kl_divergence = self.kl_divergences[0]
-
-        # The lower layer latents have priors that are conditional on the previous layer's outupt.
-        # If we copy the latent, then we use generative samples to evaluate the log-likelihood of both the posterior,
-        # q(zi|zi+1), and of the prior, p(zi|zi-1). If we do not copy, the the samples 
-        # for i in range(1, len(self.decoder)):
-        #     if copy_latents[-(i+1)]:
-        #         self.kl_divergences[i] = kld_gaussian_gaussian(q_zi, qz_args, pz_args)
-        #     else:
-        #         # If latents are None this signifies that we don't copy the latent encoding from that layer and instead
-        #         # use the generated sample
-        #         p_zi, pz_args = self.decoder[i - 1](p_zi)
-        #         q_zi, qz_args = latents[-(i+1)]
-        #         self.kl_divergences[i] = kld_gaussian_gaussian(q_zi, qz_args, pz_args, p_zi)
-                
-        #     self.kl_divergence += self.kl_divergences[i]
-
-        # if copy_latents[-2]:
-        #     x, px_args = self.decoder[-1](q_z1)
-        # else:
-        #     x, px_args = self.decoder[-1](p_z1)
-
-        # return x, px_args
+        # return px
 
     def forward(self, x):
         """

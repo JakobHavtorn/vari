@@ -6,6 +6,10 @@ from vari.models.vae import DenseSequentialCoder
 from vari.layers import GaussianLayer, BernoulliLayer, ContinuousBernoulliLayer
 
 
+VAE_HIDDEN = [512, 512, 256, 256, 128, 128, 64, 64, 32, 32]
+HVAE_HIDDEN = [[512, 512], [256, 256], [128, 128], [64, 64], [32, 32]]
+
+
 def get_default_model_config(vae_type, dataset):
     if dataset in ['MNISTBinarized', 'FashionMNISTBinarized', 'MNISTReal', 'FashionMNISTReal']:
         kwargs = get_default_model_config_mnist(vae_type)
@@ -82,7 +86,7 @@ def get_default_model_config_mnist(vae_type):
 
 def get_default_model_config_synthetic_2d(vae_type):
     if vae_type == 'VariationalAutoencoder':
-        x_dim, z_dim, h_dim = 2, 2, [64, 64, 32, 32]
+        x_dim, z_dim, h_dim = 2, 2, [64, 64, 32, 32, 16, 16]
         vae_kwargs = dict(
             encoder=DenseSequentialCoder(
                 x_dim=x_dim,
@@ -100,9 +104,15 @@ def get_default_model_config_synthetic_2d(vae_type):
             )
         )
     elif vae_type == 'HierarchicalVariationalAutoencoder':
-        x_dim, z_dim, h_dim = 2, [2, 2, 2], [[64, 64], [32, 32], [16, 16]]
-        encoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer]
-        decoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer]
+        n_layers = 1
+        x_dim, z_dim, h_dim = 2, [2, 2, 2, 2], [[64, 64], [32, 32], [16, 16], [8, 8]]
+        encoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer, GaussianLayer]
+        decoder_distribution = [GaussianLayer, GaussianLayer, GaussianLayer, GaussianLayer]
+        
+        z_dim = z_dim[:n_layers]
+        h_dim = h_dim[:n_layers]
+        encoder_distribution = encoder_distribution[:n_layers]
+        decoder_distribution = decoder_distribution[:n_layers]
 
         enc_dims = [x_dim, *z_dim]
         dec_dims = enc_dims[::-1]  # reverse

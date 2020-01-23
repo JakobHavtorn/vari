@@ -13,7 +13,8 @@ from model_utils.experiment import Experiment
 import vari.models.vae
 import vari.datasets
 
-from vari.models import get_default_model_config
+from vari.layers import GaussianLayer
+from vari.models import build_dense_vae
 from vari.utilities import get_device, summary
 from vari.inference import DeterministicWarmup
 
@@ -38,19 +39,25 @@ def default_configuration():
     importance_samples = 10
     learning_rate = 3e-4
     warmup_epochs = 0
-
-    # VariationalAutoencoder, LadderVariationalAutoencoder, AuxilliaryVariationalAutoencoder, LadderVariationalAutoencoder
-    vae_type = 'VariationalAutoencoder'
-    # vae_type = 'HierarchicalVariationalAutoencoder'
-    # vae_type = 'AuxilliaryVariationalAutoencoder'
-    # vae_type = 'LadderVariationalAutoencoder'
+    
+    model_kwargs = dict(
+        x_dim=2,
+        z_dim=[2, 2],
+        h_dim=[[64, 64], [32, 32]],
+    )
 
     device = get_device()
-    seed = 1
+    seed = 0
+
+
+@ex.config
+def dependent_configuration(model_kwargs):
+    model_kwargs['encoder_distribution'] = ['GaussianLayer'] * len(model_kwargs['z_dim'])
+    model_kwargs['decoder_distribution'] = ['GaussianLayer'] * (len(model_kwargs['z_dim']) - 1) + ['GaussianFixedVarianceLayer']
 
 
 @ex.automain
-def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, learning_rate, importance_samples,
+def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
         warmup_epochs, seed):
 
     # Print config, set threads and seed
@@ -66,11 +73,11 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                               num_workers=2, pin_memory=device=='cuda')
+    test_loader = train_loader
 
-    model_kwargs = get_default_model_config(vae_type, dataset_name)
+
+    model, model_kwargs = build_dense_vae(vari.models.HierarchicalVariationalAutoencoder, **model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
-    model = getattr(vari.models.vae, vae_type)
-    model = model(**model_kwargs)
     model.to(device)
     print(model)
     summary(model, (np.prod(train_dataset[0][0].shape),))
@@ -91,6 +98,7 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
         while epoch < n_epochs:
             model.train()
             total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
+            total_elbo_1iw, total_kl_1iw, total_likelihood_1iw, total_kls_1iw = 0, 0, 0, defaultdict(lambda: 0)
             beta = next(deterministic_warmup)
             for b, (x, _) in enumerate(train_loader):
                 x = x.to(device)
@@ -98,12 +106,14 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 optimizer.zero_grad()
 
                 x = x.view(x.shape[0], np.prod(x.shape[1:]))
-                elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
-
-                # print(i_update)
-                # if i_update > 1000:
-                #     import IPython
-                #     IPython.embed()
+                # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
+                elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
+                                                             reduce_importance_samples=False)
+                
+                elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
+                kl_divergences_1iw = {k: v[0, ...] for k, v in model.kl_divergences.items()}
+                elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergence)
+                kl_divergences = model.kl_divergences
 
                 loss = - torch.mean(elbo)
                 loss.backward()
@@ -112,27 +122,43 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
                 total_kl += kl_divergence.mean().item()
-                for k, v in model.kl_divergences.items():
+                for k, v in kl_divergences.items():
                     total_kls[k] += v.mean().item()
+                total_elbo_1iw += elbo_1iw.mean().item()
+                total_likelihood_1iw += likelihood_1iw.mean().item()
+                total_kl_1iw += kl_divergence_1iw.mean().item()
+                for k, v in kl_divergences_1iw.items():
+                    total_kls_1iw[k] += v.mean().item()
 
                 ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
                 ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
-                for k, v in model.kl_divergences.items():
+                for k, v in kl_divergences.items():
                     ex.log_scalar(f'(batch) KL for {k}', v.mean().item(), step=i_update)
                 i_update += 1
                 
             total_elbo /= len(train_loader)
             total_likelihood /= len(train_loader)
             total_kl /= len(train_loader)
-                
-            ex.log_scalar(f'ELBO log p(x)', total_elbo, step=epoch)
-            ex.log_scalar(f'log p(x|z)', total_likelihood, step=epoch)
-            ex.log_scalar(f'KL(q(z|x)||p(z))', total_kl, step=epoch)
-            ex.log_scalar(f'ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
+            total_elbo_1iw /= len(train_loader)
+            total_likelihood_1iw /= len(train_loader)
+            total_kl_1iw /= len(train_loader)
+
+            ex.log_scalar(f'IW {importance_samples} log p(x)', total_elbo, step=epoch)
+            ex.log_scalar(f'IW {importance_samples} log p(x|z)', total_likelihood, step=epoch)
+            ex.log_scalar(f'IW {importance_samples} KL(q||p)', total_kl, step=epoch)
+            ex.log_scalar(f'IW {importance_samples} ß·KL(q||p)', beta * total_kl, step=epoch)
             for k, v in total_kls.items():
-                ex.log_scalar(f'KL for {k}', v / len(train_loader), step=epoch)
+                ex.log_scalar(f'IW {importance_samples} KL for {k}', v / len(train_loader), step=epoch)
+            
+            if importance_samples != 1:
+                ex.log_scalar(f'IW 1 log p(x)', total_elbo_1iw, step=epoch)
+                ex.log_scalar(f'IW 1 log p(x|z)', total_likelihood_1iw, step=epoch)
+                ex.log_scalar(f'IW 1 KL(q||p)', total_kl_1iw, step=epoch)
+                ex.log_scalar(f'IW 1 ß·KL(q||p)', beta * total_kl_1iw, step=epoch)
+                for k, v in total_kls_1iw.items():
+                    ex.log_scalar(f'IW 1 KL for {k}', v / len(train_loader), step=epoch)
                 
             s = f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}'
             if len(total_kls) > 1:
@@ -151,9 +177,9 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
                 
                 model.eval()
-                for iws in [1, importance_samples, 5000]:
+                for iws in sorted(set([1, importance_samples])):
                     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
-                    for b, (x, _) in enumerate(train_loader):
+                    for b, (x, _) in enumerate(test_loader):
                         x = x.to(device)
 
                         x = x.view(x.shape[0], np.prod(x.shape[1:]))
@@ -169,19 +195,19 @@ def run(device, dataset_name, dataset_kwargs, vae_type, n_epochs, batch_size, le
                     total_likelihood /= len(test_loader)
                     total_kl /= len(test_loader)
 
-                    ex.log_scalar(f'[TEST] IW={iws} ELBO log p(x)', total_elbo, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} log p(x)', total_elbo, step=epoch)
                     ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
-                    ex.log_scalar(f'[TEST] IW={iws} KL(q(z|x)||p(z))', total_kl, step=epoch)
-                    ex.log_scalar(f'[TEST] IW={iws} ß * KL(q(z|x)||p(z))', beta * total_kl, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} KL(q||p)', total_kl, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} ß·KL(q||p)', beta * total_kl, step=epoch)
                     for k, v in total_kls.items():
-                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(train_loader), step=epoch)
+                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(test_loader), step=epoch)
 
                     s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
                     if len(total_kls) > 1:
                         for k, v in total_kls.items():
                             s += f' | KL {k} {v / len(test_loader):2.4f}'
                     print(s)
-            
+
             epoch += 1
 
     except KeyboardInterrupt:

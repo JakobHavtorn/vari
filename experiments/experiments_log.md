@@ -1,5 +1,12 @@
 # Experiment log
 
+## Extra layers on Hierarchical VAE for Spirals
+
+- 3 Layers has classes are not completely separated in z3
+- 4 layers has trouble activating z3 and z4.
+
+
+
 ## 21/01 Moons/Spirals
 
 | ID   | Model | Model                          | Data    | KL      | IW   | ELBO (IW=1000)      |

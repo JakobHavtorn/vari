@@ -49,11 +49,15 @@ class Distribution(nn.Module):
 
 
 class GaussianLayer(Distribution):
-    """Layer that parameterizes a Gaussian distribution by its mean and standard deviation
+    """Layer that parameterizes a Gaussian distribution by its mean and standard deviation.
     
-    The layer outputs a mean with range [-inf, inf] parameterized by a linear transformation of the input without
-    nonlinearity and a standard deviation with range [0, inf] parameterized
-    range []."""
+    The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
+    standard deviation.
+    
+    The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
+    The standard deviation is parameterized by a linear transformation of the input followed by a softplus activation
+    scaling it to [0, inf] and then a Clamping to fix it in the range [min_sd, max_sd] = [1e-8, 10] by default.
+    """
     def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10):
         super().__init__()
         self.in_features = in_features
@@ -97,6 +101,38 @@ class GaussianLayer(Distribution):
         # NOTE The below allows using analytical KL divergence directly without modifications to torch
         # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
+
+
+class GaussianFixedVarianceLayer(Distribution):
+    """Layer that parameterizes a Gaussian distribution by its mean and a fixed standard deviation.
+    
+    The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
+    standard deviation.
+    
+    The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
+    The standard deviation is fixed at a constant value of 1 and is not learnable.
+    
+    The log-likelihod of the distributions resulting from this layer correspond to the MSE loss function.
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.mu = nn.Linear(in_features, out_features)
+        self.scale = torch.ones(out_features).to(get_device())
+        self.initialize()
+        
+    def initialize(self):
+        # For the mean there is no nonlinearity so we simply take gain to be 1
+        nn.init.xavier_normal_(self.mu.weight, gain=1.)
+        
+    def get_prior(self):
+        return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), 1)
+
+    def forward(self, x):
+        mu = self.mu(x)
+        return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), 1)
 
 
 class BernoulliLayer(Distribution):
