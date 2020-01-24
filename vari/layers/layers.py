@@ -110,17 +110,17 @@ class GaussianFixedVarianceLayer(Distribution):
     standard deviation.
     
     The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
-    The standard deviation is fixed at a constant value of 1 and is not learnable.
+    The standard deviation is fixed at a constant value of `std` and is not learnable.
     
     The log-likelihod of the distributions resulting from this layer correspond to the MSE loss function.
     """
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, std=0.1):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
 
         self.mu = nn.Linear(in_features, out_features)
-        self.scale = torch.ones(out_features).to(get_device())
+        self.scale = std * torch.ones(out_features).to(get_device())
         self.initialize()
         
     def initialize(self):
