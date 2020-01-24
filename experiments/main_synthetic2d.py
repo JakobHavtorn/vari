@@ -7,6 +7,7 @@ from collections import defaultdict
 import torch
 from torch.utils.data import DataLoader
 from pprint import pprint
+from sacred import SETTINGS
 
 from model_utils.experiment import Experiment
 
@@ -20,6 +21,8 @@ from vari.inference import DeterministicWarmup
 
 import IPython
 
+
+SETTINGS.CONFIG.READ_ONLY_CONFIG = False
 LOGGER = logging.getLogger()
 ex = Experiment(name='OOD VAE')
 
@@ -31,7 +34,7 @@ def default_configuration():
     dataset_name = 'Moons'
     dataset_kwargs = dict(
         n_samples=10000,
-        noise=0.0
+        noise=0.05
     )
 
     n_epochs = 1000
@@ -53,7 +56,7 @@ def default_configuration():
 @ex.config
 def dependent_configuration(model_kwargs):
     model_kwargs['encoder_distribution'] = ['GaussianLayer'] * len(model_kwargs['z_dim'])
-    model_kwargs['decoder_distribution'] = ['GaussianLayer'] * (len(model_kwargs['z_dim']) - 1) + ['GaussianFixedVarianceLayer']
+    model_kwargs['decoder_distribution'] = ['GaussianLayer'] * len(model_kwargs['z_dim'])
 
 
 @ex.automain
@@ -75,9 +78,9 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                               num_workers=2, pin_memory=device=='cuda')
     test_loader = train_loader
 
-
     model, model_kwargs = build_dense_vae(vari.models.HierarchicalVariationalAutoencoder, **model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
+    torch.load(f'{ex.models_dir()}/model_kwargs.pkl')  # Check loading
     model.to(device)
     print(model)
     summary(model, (np.prod(train_dataset[0][0].shape),))
@@ -130,12 +133,12 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 for k, v in kl_divergences_1iw.items():
                     total_kls_1iw[k] += v.mean().item()
 
-                ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
-                ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
-                ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
-                ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
-                for k, v in kl_divergences.items():
-                    ex.log_scalar(f'(batch) KL for {k}', v.mean().item(), step=i_update)
+                # ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
+                # ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
+                # ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
+                # ex.log_scalar(f'(batch) ß * KL(q(z|x)||p(z))', beta * kl_divergence.mean().item(), step=i_update)
+                # for k, v in kl_divergences.items():
+                #     ex.log_scalar(f'(batch) KL for {k}', v.mean().item(), step=i_update)
                 i_update += 1
                 
             total_elbo /= len(train_loader)
