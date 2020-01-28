@@ -34,12 +34,12 @@ def default_configuration():
     dataset_name = 'Moons'
     dataset_kwargs = dict(
         n_samples=10000,
-        noise=0.05
+        noise=0.00
     )
 
     n_epochs = 1000
     batch_size = 256
-    importance_samples = 10
+    importance_samples = 100
     learning_rate = 3e-4
     warmup_epochs = 0
     
@@ -78,7 +78,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                               num_workers=2, pin_memory=device=='cuda')
     test_loader = train_loader
 
-    model, model_kwargs = build_dense_vae(vari.models.HierarchicalVariationalAutoencoder, **model_kwargs)
+    model, model_kwargs = build_dense_vae(**model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
     torch.load(f'{ex.models_dir()}/model_kwargs.pkl')  # Check loading
     model.to(device)
@@ -113,10 +113,10 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
                                                              reduce_importance_samples=False)
                 
-                elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
                 kl_divergences_1iw = {k: v[0, ...] for k, v in model.kl_divergences.items()}
-                elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergence)
+                elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
                 kl_divergences = model.kl_divergences
+                elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergences)
 
                 loss = - torch.mean(elbo)
                 loss.backward()
@@ -179,42 +179,42 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
                 
-                model.eval()
-                for iws in sorted(set([1, importance_samples])):
-                    total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
-                    for b, (x, _) in enumerate(test_loader):
-                        x = x.to(device)
+                # model.eval()
+                # for iws in sorted(set([1, importance_samples])):
+                #     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
+                #     for b, (x, _) in enumerate(test_loader):
+                #         x = x.to(device)
 
-                        x = x.view(x.shape[0], np.prod(x.shape[1:]))
-                        elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
+                #         x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                #         elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
 
-                        total_elbo += elbo.mean().item()
-                        total_likelihood += likelihood.mean().item()
-                        total_kl += kl_divergence.mean().item()
-                        for k, v in model.kl_divergences.items():
-                            total_kls[k] += v.mean().item()
+                #         total_elbo += elbo.mean().item()
+                #         total_likelihood += likelihood.mean().item()
+                #         total_kl += kl_divergence.mean().item()
+                #         for k, v in model.kl_divergences.items():
+                #             total_kls[k] += v.mean().item()
 
-                    total_elbo /= len(test_loader)
-                    total_likelihood /= len(test_loader)
-                    total_kl /= len(test_loader)
+                #     total_elbo /= len(test_loader)
+                #     total_likelihood /= len(test_loader)
+                #     total_kl /= len(test_loader)
 
-                    ex.log_scalar(f'[TEST] IW={iws} log p(x)', total_elbo, step=epoch)
-                    ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
-                    ex.log_scalar(f'[TEST] IW={iws} KL(q||p)', total_kl, step=epoch)
-                    ex.log_scalar(f'[TEST] IW={iws} ß·KL(q||p)', beta * total_kl, step=epoch)
-                    for k, v in total_kls.items():
-                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(test_loader), step=epoch)
+                #     ex.log_scalar(f'[TEST] IW={iws} log p(x)', total_elbo, step=epoch)
+                #     ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
+                #     ex.log_scalar(f'[TEST] IW={iws} KL(q||p)', total_kl, step=epoch)
+                #     ex.log_scalar(f'[TEST] IW={iws} ß·KL(q||p)', beta * total_kl, step=epoch)
+                #     for k, v in total_kls.items():
+                #         ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(test_loader), step=epoch)
 
-                    s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
-                    if len(total_kls) > 1:
-                        for k, v in total_kls.items():
-                            s += f' | KL {k} {v / len(test_loader):2.4f}'
-                    print(s)
+                #     s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
+                #     if len(total_kls) > 1:
+                #         for k, v in total_kls.items():
+                #             s += f' | KL {k} {v / len(test_loader):2.4f}'
+                #     print(s)
 
             epoch += 1
 
     except KeyboardInterrupt:
         print('Interrupted experiment')
-        return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
+        return f'ELBO={best_elbo:.2f}, p(x|z)={best_likelihood:.2f}, KL(q||p)={best_kl:.2f}'
 
-    return f'ELBO={best_elbo:2f}, p(x|z)={best_likelihood:2f}, KL(q||p)={best_kl:2f}'
+    return f'ELBO={best_elbo:.2f}, p(x|z)={best_likelihood:.2f}, KL(q||p)={best_kl:.2f}'
