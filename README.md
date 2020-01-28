@@ -1,6 +1,29 @@
 # vari
 
 
+## Dataset likelihoods
+
+For reference and sanity checking, here are some estimates of the maximum attainable log-likelihood for some datasets.
+
+| Dataset                             | max log p(x) |
+| ----------------------------------- | ------------ |
+| Moons (σ=0.00)                      | >= 2.6       |
+| Moons (σ=0.01)                      | >= 1.2       |
+| Moons (σ=0.05)                      | >= -0.3      |
+| Spirals (σ=0.00)                    | >= 1.8       |
+|                                     |              |
+| MNIST (deterministic at 0.5)        |              |
+| MNIST (dynamic)                     |              |
+| MNIST (static)                      |              |
+|                                     |              |
+| FashionMNIST (deterministic at 0.5) |              |
+| FashionMNIST (dynamic)              |              |
+| FashionMNIST (static)               |              |
+|                                     |              |
+
+
+
+
 
 ## Improvement projects
 
