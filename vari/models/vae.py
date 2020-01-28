@@ -43,18 +43,18 @@ class DenseSequentialCoder(nn.Module):
     Returns the distribution (with batch dimension) that encodes a batch of examples (x or z).
 
     Arguments:
-        x_dim (tuple of ints): Dimensionality of the inputs to be expected e.g. (784) or (28, 28)
-        z_dim (tuple of ints); Dimensionality of the latent space (regularized to conform to the prior of the `distribution`)
+        x_dim (int): Dimensionality of the inputs to be expected e.g. 784
+        z_dim (int); Dimensionality of the latent space (regularized to conform to the prior of the `distribution`)
         h_dim (list of int): Dimensionality of the intermediate hidden affine nonlinear transformations.
         activation (nn.Activation): The activation function to apply between affine layers.
         distribution (vari.layers): The model that parameterizes the distribution of the latent space.
     """
     def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, distribution=GaussianLayer):
         super().__init__()
-
+        assert isinstance(x_dim, int) and isinstance(z_dim, int) and isinstance(h_dim, list)
         self.x_dim = x_dim
         self.z_dim = z_dim
-        self.h_dim = [h_dim] if isinstance(h_dim, int) else h_dim
+        self.h_dim = h_dim
         self._activation = activation
         self._distribution = distribution
 
@@ -138,9 +138,7 @@ class VariationalAutoencoder(nn.Module):
         self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
         # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
         # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
-        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
-               log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
-               self.kl_divergence
+        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
 
     def encode(self, x, importance_samples=1):
         qz = self.encoder(x)
@@ -214,19 +212,17 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         Returns:
             [type]: [description]
         """
-        qz = self.encode(x, importance_samples=importance_samples)
-        px = self.decode(qz, copy_latents=copy_latents)
+        px = self.forward(x, importance_samples=importance_samples, copy_latents=copy_latents)
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
 
         if reduce_importance_samples:
-            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergence)
+            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
         return elbo, likelihood, self.kl_divergence
 
-    def reduce_importance_samples(self, elbo, likelihood, kl_divergence):
-        # TODO We are not looping over the given KL divergence????
-        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in self.kl_divergences.items()])
-        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), self.kl_divergence
+    def reduce_importance_samples(self, elbo, likelihood, kl_divergences):
+        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
+        return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
         # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
         # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
         #        log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
@@ -255,8 +251,6 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         Returns:
             tuple: Tuple of samples and distribution parameters for input space [(x, (px_parameters)), ...]
         """
-        import IPython
-        IPython.embed()
         assert copy_latents is None or len(copy_latents) == len(latents), 'Specify for each latent whether to copy.'
         assert copy_latents is None or copy_latents[f'z{self.n_layers}'], 'Top latent must be copied from the encoder.'
         self.kl_divergences = OrderedDict([(f'z{i+1}', 0) for i in range(0, self.n_layers)])  # Reset
@@ -266,7 +260,6 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             qz_samples, qz = latents[z_key]
             if copy_latents is None or copy_latents[z_key]:  # Copy latents from layer below for decoding (and KL)
                 if z_index == self.n_layers:  # At top we use prior for KL
-                    # self.kl_divergences[z_key] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
                     self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
                                                          self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
                 else:
@@ -282,45 +275,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
 
         return pz  # Final pz is actually p(x|z)
 
-
-        # # TODO Generalize to L layers
-        # # TODO Remove references to analytical KL divergence
-        # # Top most latent has unconditional prior and is always required to be given (i.e. copied)
-        # qz3_samples, qz3 = latents[f'z{3}']
-        # if copy_latents[2]:
-        #     # self.kl_divergences[f'z{3}'] = torch.distributions.kl_divergence(qz3, self.encoder[0].distribution.get_prior())
-        #     self.kl_divergences[f'z{3}'] = qz3.log_prob(qz3_samples) - self.encoder[-1].distribution.get_prior().log_prob(qz3_samples)
-        #     pz2 = self.decoder[-3](qz3_samples)
-        # else:
-        #     raise ValueError('copy_latents[-1] must be True since this is the top-most latent that cannot be generated')
-
-        # qz2_samples, qz2 = latents[f'z{2}']
-        # if copy_latents[1]:
-        #     # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz2, pz2)
-        #     self.kl_divergences[f'z{2}'] = qz2.log_prob(qz2_samples) - pz2.log_prob(qz2_samples)
-        #     pz1 = self.decoder[-2](qz2_samples)
-        # # else:
-        # #     self.kl_divergences[f'z{2}'] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
-        # #                               kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
-        # #     # self.kl_divergence += self.kl_divergences[2]
-        # #     pz2_samples = pz2.rsample()
-        # #     px = self.decoder[2](pz2_samples)
-            
-        # qz1_samples, qz1 = latents[f'z{1}']
-        # if copy_latents[0]:
-        #     # self.kl_divergences[f'z{1}'] = torch.distributions.kl_divergence(qz1, pz1)
-        #     self.kl_divergences[f'z{1}'] = qz1.log_prob(qz1_samples) - pz1.log_prob(qz1_samples)
-        #     px = self.decoder[-1](qz1_samples)
-        # # else:
-        # #     self.kl_divergences[f'z{1}'] = (kld_gaussian_gaussian(qz1_samples, qz1, p_param=pz1) +
-        # #                                    kld_gaussian_gaussian(qz1_samples, pz1, p_param=qz1)) / 2
-        # #     # self.kl_divergence += self.kl_divergences[1]
-        # #     pz1_samples = pz1.rsample()
-        # #     px = self.decoder[3](pz1_samples)
-
-        # return px
-
-    def forward(self, x):
+    def forward(self, x, importance_samples=1, copy_latents=None):
         """
         Runs a data point through the model in order
         to provide its reconstruction and q distribution
@@ -328,8 +283,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         :param x: input data
         :return: reconstructed input
         """
-        qz = self.encode(x)  # Latent inference q(z|x)
-        px = self.decode(qz)  # Generative p(x|z)
+        qz = self.encode(x, importance_samples=importance_samples)  # Latent inference q(z|x)
+        px = self.decode(qz, copy_latents=copy_latents)  # Generative p(x|z)
         return px
 
     def generate(self, n_samples=None, z=None, seed=None):
@@ -342,7 +297,6 @@ class HierarchicalVariationalAutoencoder(nn.Module):
                 pz = decoder(z)
                 z = pz.sample()
             return pz
-        # TODO Is this broken? Do we unroll z which is only samples and not distribution?
         if seed is not None:
             torch.manual_seed(seed)
         if z is not None:
