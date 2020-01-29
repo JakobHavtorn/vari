@@ -7,6 +7,10 @@ def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribut
     encoder_distribution = [getattr(vari.layers, distribution) for distribution in encoder_distribution]
     decoder_distribution = [getattr(vari.layers, distribution) for distribution in decoder_distribution]
     
+    assert len(z_dim) == len(h_dim)
+    assert len(z_dim) == len(encoder_distribution)
+    assert len(encoder_distribution) == len(decoder_distribution)
+    
     enc_dims = [x_dim, *z_dim]
     dec_dims = enc_dims[::-1]  # reverse
     h_dim_rev = [h[::-1] for h in h_dim][::-1]  # reverse [[a, b], [c, d]] --> [[d, c], [b, a]]

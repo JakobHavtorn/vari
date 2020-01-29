@@ -108,7 +108,6 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
 
                 optimizer.zero_grad()
 
-                x = x.view(x.shape[0], np.prod(x.shape[1:]))
                 # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
                                                              reduce_importance_samples=False)
@@ -175,8 +174,14 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
+                
                 px = model.generate(z=pz_samples)
                 np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
+                
+                x, _ = next(iter(test_loader))
+                latents = model.encode(x.to(device))
+                torch.save(latents, f'{ex.models_dir()}/model_latents.pkl')
+
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
                 
                 # model.eval()

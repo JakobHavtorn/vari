@@ -208,7 +208,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             x (tensor): Inputs of shape [N, *, D] where N is batch and D is input dimension (potentially more than one)
             importance_samples ([type], optional): [description]. Defaults to None.
             beta (int, optional): [description]. Defaults to 1.
-        
+
         Returns:
             [type]: [description]
         """
@@ -223,10 +223,6 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     def reduce_importance_samples(self, elbo, likelihood, kl_divergences):
         self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
-        # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
-        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), \
-        #        log_sum_exp(likelihood, axis=0, sum_op=torch.mean).flatten(), \
-        #        self.kl_divergence
 
     def encode(self, x, importance_samples=1):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
@@ -244,33 +240,34 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         
         Args:
             latents (list of tuple): List of samples and distribution parameters [(z1, z1_distribution), ...]
-            copy_latents (list of bool, optional): If not None must be a list that is True for each latent to copy from.
-                                                   the encoder and False when using the generative sample.
-                                                   Defaults to None in which case all latents are copied.
+            copy_latents (dict, optional): If not None must be a dict that is True for each latent to copy from
+                                           the encoder and False when wanting to use the generative sample.
+                                           If the top most latent is not copied, we sample from the prior in the same
+                                           dimensions as the top most encoded latent.
+                                           Defaults to None in which case all latents are copied from the encoder.
 
         Returns:
             tuple: Tuple of samples and distribution parameters for input space [(x, (px_parameters)), ...]
         """
         assert copy_latents is None or len(copy_latents) == len(latents), 'Specify for each latent whether to copy.'
-        assert copy_latents is None or copy_latents[f'z{self.n_layers}'], 'Top latent must be copied from the encoder.'
         self.kl_divergences = OrderedDict([(f'z{i+1}', 0) for i in range(0, self.n_layers)])  # Reset
 
         for z_index in range(self.n_layers, 0, -1):  # [self.n_layers, self.n_layers - 1, ..., 1]
             z_key = f'z{z_index}'
             qz_samples, qz = latents[z_key]
+            if z_index == self.n_layers:  # At top we use prior for KL
+                self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
+                                                        self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
+            else:
+                self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
             if copy_latents is None or copy_latents[z_key]:  # Copy latents from layer below for decoding (and KL)
-                if z_index == self.n_layers:  # At top we use prior for KL
-                    self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
-                                                         self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
-                else:
-                    self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
                 pz = self.decoder[-z_index](qz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  q(z_{i}|z_{i-1}) or q(z_1|x)
             else:
-                # TODO Compute the correct KL divergence term here
-                self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
-                # self.kl_divergences[z_key] = (kld_gaussian_gaussian(qz2_samples, qz2, p_param=pz2) +
-                #                                 kld_gaussian_gaussian(qz2_samples, pz2, p_param=qz2)) / 2
-                pz_samples = pz.rsample()
+                if z_index == self.n_layers:
+                    pz = self.encoder[-1].distribution.get_prior()
+                    pz_samples = pz.rsample(qz.batch_shape)
+                else:
+                    pz_samples = pz.rsample()
                 pz = self.decoder[-z_index](pz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  p(z_{i}|z_{i+1})
 
         return pz  # Final pz is actually p(x|z)
