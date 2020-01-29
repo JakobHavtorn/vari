@@ -17,13 +17,11 @@ def make_data_spiral(n_samples=10000, shuffle=True, noise=0.0, rotation=0, start
     # Radii values for class a and b
     r_a = -theta - start_radius
     data_a = np.array([np.cos(theta) * r_a, np.sin(theta) * r_a]).T
-    x_a = data_a + noise * np.random.randn(n_samples, 2)
-    x_a = np.dot(x_a, rot_mat)
+    x_a = np.dot(data_a, rot_mat)
 
     r_b = theta + start_radius
     data_b = np.array([np.cos(theta) * r_b, np.sin(theta) * r_b]).T
-    x_b = data_b + noise * np.random.randn(n_samples, 2)
-    x_b = np.dot(x_b, rot_mat)
+    x_b = np.dot(data_b, rot_mat)
     
     res_a = np.append(x_a, np.zeros((n_samples, 1)), axis=1)
     res_b = np.append(x_b, np.ones((n_samples, 1)), axis=1)
@@ -32,6 +30,7 @@ def make_data_spiral(n_samples=10000, shuffle=True, noise=0.0, rotation=0, start
     np.random.shuffle(res)
 
     values = res[:, :2] / normalizing_constant  # Normalize to have radii of 2π scaled down to 2π/normalizing_constant
+    values += noise * np.random.randn(*values.shape)  # Add noise
     labels = np.identity(res[:, 2].astype(int).max() + 1)[res[:, 2].astype(int)]
     return values.astype(np.float32), labels.astype(np.int32)
 

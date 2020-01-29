@@ -56,6 +56,7 @@ def log_bernoulli(x, p, eps=1e-8):
     # bernoulli.log_prob(x)
     return torch.sum(log_pdf, dim=-1)
 
+
 def log_continuous_bernoulli(x, p):
     """
     Returns the log pdf of the Continuous Bernoulli distribution parameterized by p evalauted at x
