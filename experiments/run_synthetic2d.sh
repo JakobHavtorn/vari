@@ -19,6 +19,17 @@ env CUDA_VISIBLE_DEVICES='3' python experiments/main_synthetic2d.py \
 # --unobserved
 
 env CUDA_VISIBLE_DEVICES='3' python experiments/main_synthetic2d.py \
+--name "OOD Moons σ=0.01 VAE z=[2] h=[[16, 16], [8, 8]] IW=1 WU=0 BS=128" with \
+'n_epochs=1000' \
+'batch_size=128' \
+'dataset_name=Moons' \
+'dataset_kwargs.noise=0.01' \
+'importance_samples=1' \
+'model_kwargs.z_dim=[2]' \
+'model_kwargs.h_dim=[[16, 16], [8, 8]]' \
+# --unobserved
+
+env CUDA_VISIBLE_DEVICES='3' python experiments/main_synthetic2d.py \
 --name "OOD Moons σ=0.02 VAE z=[2] h=[[64, 64, 32, 32]] IW=10 WU=0 BS=256" with \
 'n_epochs=1000' \
 'dataset_name=Moons' \

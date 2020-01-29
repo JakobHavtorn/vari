@@ -7,6 +7,57 @@
 
 
 
+
+
+## 24/01 Moons/Spirals
+
+Training on Moons and Spirals without noise:
+
+1-layer VAE z=[2] h=[64, 64, 32, 32]
+2-layer VAE z=[2, 2], h=[[64, 64], [32, 32]]
+
+- Latent pockets form in 1-layer VAE latent space
+- Latent pockets are removed in z2 for 2-layer VAE which has ability to learn covariance
+- Generating data from the the 2-layer model gives nicer samples with almost no wrong samples compared to 1-layer VAE
+- Out-of-distribution detection is very convincing. The ELBO outside of training data is large negative numbers.
+    - This almost too god - we cannot show that the 1-layer model fails at OOD detection (it actually succeeds)
+    - Therefore we want to add noise to the data - in this way, we can also move the test set closer to or futher from
+      the training set (before this was basically a discontinuous jump)
+
+Training with noise = 0.05 on Moons and Spirals
+- Latent pockets do not form in the 1-layer model anymore!
+    - Is the noise making the task harder?
+        - Adding noise to the data has made training more stable.
+        - 
+- ELBO and KL plots show more separation for models with additional latent layers but the difference is not remarkable.
+    - This may require some tuning to be nice-looking.
+
+
+
+noise 
+- 0.05
+    - [64, 64, 32, 32] --> No latent pockets
+- 0.01
+    - [16, 16]
+    - [32, 32]
+    - [64, 64]
+    - [64, 64, 32, 32]
+
+
+
+## 24/01 Moons/Spirals noise
+Single layer VAE z=[2] trained on Moons and Spirals with and without noise (noise=0, noise=0,05)
+6606 Spirals σ=0.05
+6605 Moons σ=0.05
+6602 Spirals FixedVariance
+6601 Moons FixedVariance
+
+Modellen med fixed variance/standard deviation på 0.01 træner meget bedre på Moons og Spirals end std=1. Det er også værd at bemærke at de “divergens spring” som modellen med den lærte varians havde er forsvundet med fixed varians.ELBO bliver heller ikke helt så god som før.
+Med fixed varians ser jeg dog stadig at ELBO og likelihood falder og bliver <-100 for ét importance sample. Når jeg log-sum-exp’er over 100 importance samples er de begge gode.
+--> Så det tyder på at variansen før blev lært til at være meget, meget lille. Det ville kunne give ustabilitet når den jævnligt når ekstremt små værdier og det giver sjældne rekonstruktioner med meget lav likelihood (<-1000).
+Grunden til at variansen bliver lært så lille må være at der ikke ér nogen varians i datasættet (hvilket giver mening). Derfor prøver jeg lige at tilføje noget støj til de syntetiske datasæt og træne med lært varians igen. Jeg regner med at “divergens springene” forsvinder, men jeg ved ikke rigtig om jeg forventer at de lave likelihoods bliver løst.
+
+
 ## 21/01 Moons/Spirals
 
 | ID   | Model | Model                          | Data    | KL      | IW   | ELBO (IW=1000)      |
