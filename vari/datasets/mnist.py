@@ -158,13 +158,13 @@ class MNISTReal(MNISTBinarized):
         Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
         This results in continuous values in [0, 1].
         """
+        examples = examples.astype(np.float32)
         if self.preprocess != 'deterministic':
             noise_matrix = np.random.rand(*examples.shape)
             examples += noise_matrix
-            examples /= 255
-        else:
-            examples = examples.astype(np.float32)
             examples /= 256
+        else:
+            examples /= 255
         return examples
 
     def warp(self, examples):
