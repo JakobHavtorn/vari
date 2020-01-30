@@ -62,6 +62,8 @@ class GaussianLayer(Distribution):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.min_sd = min_sd
+        self.max_sd = max_sd
 
         self.mu = nn.Linear(in_features, out_features)
         self.scale = nn.Sequential(
@@ -101,6 +103,9 @@ class GaussianLayer(Distribution):
         # NOTE The below allows using analytical KL divergence directly without modifications to torch
         # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
         # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
+        
+    def extra_repr(self):
+        return f'min_sd={self.min_sd}, max_sd={self.max_sd}'
 
 
 class GaussianFixedVarianceLayer(Distribution):
@@ -111,13 +116,21 @@ class GaussianFixedVarianceLayer(Distribution):
     
     The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
     The standard deviation is fixed at a constant value of `std` and is not learnable.
+    As such, the layer can only model homoscedastic variance.
     
-    The log-likelihod of the distributions resulting from this layer correspond to the MSE loss function.
+    The log-likelihod of the distributions resulting from this layer correspond to the MSE loss function. 
+    
+    If the std is set to sqrt(0.5) then the MSE loss is not scaled but is offset by -0.5*log(2π * sqrt(0.5)) = -0.746.
+    If the std is set to 1, then the MSE loss is scaled by 0.5 and is offset by -0.5*log(2π) = 0.919.
+    From a modelling perspective, setting the standard deviation to the standard deviation of the input space data
+    distribution makes the most sense, but this may not be know or may be variable depending on the input value
+    (heteroscedastic variance).
     """
-    def __init__(self, in_features, out_features, std=0.1):
+    def __init__(self, in_features, out_features, std=0.01):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.std = std
 
         self.mu = nn.Linear(in_features, out_features)
         self.scale = std * torch.ones(out_features).to(get_device())
@@ -133,6 +146,9 @@ class GaussianFixedVarianceLayer(Distribution):
     def forward(self, x):
         mu = self.mu(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), 1)
+    
+    def extra_repr(self):
+        return f'std={self.std}'
 
 
 class BernoulliLayer(Distribution):
