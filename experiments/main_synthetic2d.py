@@ -174,15 +174,15 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 best_kl = total_kl
                 best_likelihood = total_likelihood
                 torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
-                
-                px = model.generate(z=pz_samples)
-                np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
-                
-                x, _ = next(iter(test_loader))
-                latents = model.encode(x.to(device))
-                torch.save(latents, f'{ex.models_dir()}/model_latents.pkl')
-
                 print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
+                
+                with torch.no_grad():
+                    px = model.generate(z=pz_samples)
+                    np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
+
+                    x, _ = next(iter(test_loader))
+                    latents = model.encode(x.to(device))
+                    torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
                 
                 # model.eval()
                 # for iws in sorted(set([1, importance_samples])):
