@@ -140,5 +140,8 @@ dmypy.json
 # Pickle files
 *.pkl
 
+# Videos
+*.mp4
+
 # Data download directory
 torch_data/*
