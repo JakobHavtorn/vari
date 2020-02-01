@@ -23,21 +23,22 @@ class MNISTBinarized(Dataset):
     
     Serves binarized values in {0, 1}.
     
-    The preprocessing, which consists of binarization using the normalized pixel values [0, 1] as binomial
-    probabilities, can either be done once ahead of training `preprocess=='static'` or done anew for each
+    The non-deterministic preprocessing, which consists of binarization using the normalized pixel values [0, 1] as
+    binomial probabilities, can either be done once ahead of training `preprocess=='static'` or done anew for each
     example while training, `preprocess=='dynamic'`. Setting the `seed` will ensure reproducibility in either case.
+    The third option for `preprocess` is `deterministic` which applies a different, deterministic preprocessing that
+    binarizes images at a pixel value of 0.5.
+    
+    If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
+    example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
+    `split=='join'`.
     
     Args:
         split (str): Whether to serve the 'train' or 'test' sets or 'join' the two to a single set.
         exclude_labels (list): List of integer labels to exclude from the dataset.
-        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
         preprocess (bool): If 'static', performs preprocessing before training.
                            If 'deterministic' preprocessing is done deterministically before training.
                            If 'dynamic' preprocessing is done on the fly. 
-
-    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
-         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
-         `split=='join'`.
     """
 
     _data_source = torchvision.datasets.MNIST
@@ -123,24 +124,25 @@ class MNISTBinarized(Dataset):
 class MNISTReal(MNISTBinarized):
     """MNIST dataset including filtering and concationation of train and test sets.
     
-    Serves values in [0, 1] with gamma=0 returning the original dataset, gamma=-0.5 binarizing the dataset statically
-    and gamma=0.5 completely degrading the dataset to have all values set to 0.5.
+    Serves real values in [0, 1].
     
-    The preprocessing, which consists of the addition of uniform noise to the raw pixel values and then interpolable
-    binarization through setting gamma, can be done once ahead of training `preprocess=='static'` or done anew for each
-    example while training, `preprocess=='dynamic'`
+    The non-deterministic preprocessing, which consists of the addition of uniform noise to the raw pixel values and
+    then interpolable binarization through setting gamma, can be done once ahead of training `preprocess=='static'` or
+    done anew for each example while training, `preprocess=='dynamic'`. Setting the `seed` will ensure reproducibility
+    in either case. The third option for `preprocess` is `deterministic` which applies a different, deterministic
+    preprocessing that binarizes images at a pixel value of 0.5.
+
+    If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
+    example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
+    `split=='join'`.
     
     Args:
-        split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
+        split (str): Whether to serve the 'train' or 'test' sets or 'join' the two to a single set.
         exclude_labels (list): List of integer labels to exclude from the dataset.
+        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
         preprocess (bool): If 'static', performs preprocessing before training.
                            If 'deterministic' preprocessing is done deterministically before training.
                            If 'dynamic' preprocessing is done on the fly. 
-        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        
-    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same per
-         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
-         `split=='join'`.
     """
     _data_source = torchvision.datasets.MNIST
     _repr_attributes = MNISTBinarized._repr_attributes + ['gamma']
@@ -248,26 +250,8 @@ class MNISTBinarizedLarochelle(Dataset):
 
 
 class FashionMNISTReal(MNISTReal):
-    """FashionMNIST dataset including filtering and concationation of train and test sets.
-    
-    Serves values in [0, 1] with gamma=0 returning the original dataset, gamma=-0.5 binarizing the dataset statically
-    and gamma=0.5 completely degrading the dataset to have all values set to 0.5.
-    
-    The preprocessing, which consists of the addition of uniform noise to the raw pixel values and then interpolable
-    binarization through setting gamma, can be done once ahead of training `preprocess=='static'` or done anew for each
-    example while training, `preprocess=='dynamic'`
-    
-    Args:
-        split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
-        exclude_labels (list): List of integer labels to exclude from the dataset.
-        preprocess (bool): If 'static', performs preprocessing before training.
-                           If 'deterministic' preprocessing is done deterministically before training.
-                           If 'dynamic' preprocessing is done on the fly. 
-        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        
-    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same pe
-         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
-         `split=='join'`.
+    """FashionMNIST dataset including filtering and concationation of train and test sets. 
+    See MNISTReal.
     """
 
     _data_source = torchvision.datasets.FashionMNIST
@@ -280,22 +264,7 @@ class FashionMNISTReal(MNISTReal):
 
 class FashionMNISTBinarized(MNISTBinarized):
     """FashionMNIST dataset including filtering and concationation of train and test sets.
-    
-    Serves binarized values in {0, 1}.
-    
-    The preprocessing, which consists of binarization using the normalized pixel values [0, 1] as binomial
-    probabilities, can either be done once ahead of training `preprocess=='static'` or done anew for each
-    example while training, `preprocess=='dynamic'`. Setting the `seed` will ensure reproducibility in either case.
-    
-    Args:
-        split (str): Whether to serve the 'train' ir 'test' sets or 'join' the two to a single set.
-        exclude_labels (list): List of integer labels to exclude from the dataset.
-        gamma (float): Value in range [-0.5, 0.5] which interpolates between binarization (-0.5) and degrading (0.5)
-        preprocess (bool): If True, performs preprocessing ones before training. Else, preprocessing is done dynamically
-        
-    NOTE If preprocess is 'static', the noise added to the dataset at different values of `split` is NOT the same pe
-         example. I.e. examples from the training set are modified differently when served with `split=='train'` and 
-         `split=='join'`.
+    See MNISTBinarized.
     """
     _data_source = torchvision.datasets.FashionMNIST
 
