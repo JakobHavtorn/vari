@@ -8,7 +8,7 @@ import torch.distributions
 from torch.autograd import Variable
 
 from vari.utilities import get_device
-from vari.inference.distributions import log_gaussian, log_bernoulli, log_continuous_bernoulli
+from vari.inference.distributions import log_gaussian, log_bernoulli
 
 
 class Identity(nn.Module):
@@ -58,7 +58,7 @@ class GaussianLayer(Distribution):
     The standard deviation is parameterized by a linear transformation of the input followed by a softplus activation
     scaling it to [0, inf] and then a Clamping to fix it in the range [min_sd, max_sd] = [1e-8, 10] by default.
     """
-    def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10):
+    def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10, prior=):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features

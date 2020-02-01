@@ -47,6 +47,7 @@ def default_configuration():
         x_dim=2,
         z_dim=[2, 2],
         h_dim=[[64, 64], [32, 32]],
+        activation=torch.nn.ELU
     )
 
     device = get_device()

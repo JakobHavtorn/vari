@@ -61,17 +61,21 @@ class DenseSequentialCoder(nn.Module):
         modules = []
         dims = [x_dim, *self.h_dim]
         for i in range(1, len(dims)):
-            modules.extend([
-                nn.Linear(dims[i-1], dims[i]),
-                activation(),
-            ])
+            modules.append(nn.Linear(dims[i-1], dims[i]))
+            if activation is not None:
+                modules.append(activation())
         self.coder = nn.Sequential(*modules)
         self.distribution = distribution(self.h_dim[-1], z_dim)
         self.initialize()
 
     def initialize(self):
-        activation = self._activation().__class__.__name__.lower() if not isinstance(self._activation(), nn.LeakyReLU) else 'leaky_relu'
-        gain = nn.init.calculate_gain(activation, param=None)
+        if self._activation is None:
+            gain = 1
+        elif isinstance(self._activation(), nn.LeakyReLU) or isinstance(self._activation(), nn.ELU):
+            gain = nn.init.calculate_gain('leaky_relu', param=None)
+        else:
+            name = self._activation().__class__.__name__.lower()
+            gain = nn.init.calculate_gain(name, param=None)
         i = 0
         for m in self.coder.modules():
             if isinstance(m, nn.Linear):
