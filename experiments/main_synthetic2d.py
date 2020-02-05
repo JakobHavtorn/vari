@@ -48,7 +48,8 @@ def default_configuration():
         x_dim=2,
         z_dim=[2, 2],
         h_dim=[[64, 64], [32, 32]],
-        activation=torch.nn.Tanh
+        activation=torch.nn.Tanh,
+        skip_connections=False
     )
     
     test_importance_samples = set([1, importance_samples, 100])

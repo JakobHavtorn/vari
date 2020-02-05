@@ -172,12 +172,13 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, skip_connections=None):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.n_layers = len(encoder)
         self.kl_divergences = OrderedDict([(f'z{i+1}', 0) for i in range(0, self.n_layers)])
+        self.skip_connections = skip_connections
 
     @property
     def kl_divergence(self):
@@ -213,11 +214,26 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
         """
         latents = OrderedDict()
-        z = x
-        for i, encoder in enumerate(self.encoder, start=1):
-            qz = encoder(z)
-            z = qz.rsample(torch.Size([importance_samples])) if i==1 else qz.rsample()
-            latents[f'z{i}'] = (z, qz)
+        if self.skip_connections is not None:
+            h = self.encoder[0].coder(x)
+            qz = self.encoder[0].distribution(h)
+            z = qz.rsample(torch.Size([importance_samples]))
+            latents[f'z1'] = (z, qz)
+            for i, (encoder, skip_connection) in enumerate(zip(self.encoder[1:], self.skip_connections), start=2):
+                # import IPython
+                # IPython.embed()
+                h_skip = skip_connection(h)
+                h = encoder.coder(z)
+                h = h + h_skip
+                qz = encoder.distribution(h)
+                z = qz.rsample()
+                latents[f'z{i}'] = (z, qz)
+        else:
+            z = x
+            for i, encoder in enumerate(self.encoder, start=1):
+                qz = encoder(z)
+                z = qz.rsample(torch.Size([importance_samples])) if i==1 else qz.rsample()
+                latents[f'z{i}'] = (z, qz)
         return latents
 
     def decode(self, latents, copy_latents=None):
