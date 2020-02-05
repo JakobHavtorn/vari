@@ -35,6 +35,8 @@ For reference and sanity checking, here are some estimates of the maximum attain
 
 - Improve experiment setups with configuration files that can be read
 
+- Improve model building to allow more configuration
+
 
 ## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)
 Diagonal Gaussian KL divergences are not implemented in PyTorch ATM. This can be easily achieved by:
