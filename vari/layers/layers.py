@@ -44,11 +44,12 @@ class Clamp(nn.Module):
         return f'Clamp({self.min, self.max})'
 
 
-class Distribution(nn.Module):
-    pass
+class LearnableDistribution(nn.Module):
+    def initialize(self):
+        raise NotImplementedError
 
 
-class GaussianLayer(Distribution):
+class GaussianLayer(LearnableDistribution):
     """Layer that parameterizes a Gaussian distribution by its mean and standard deviation.
     
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
@@ -58,12 +59,19 @@ class GaussianLayer(Distribution):
     The standard deviation is parameterized by a linear transformation of the input followed by a softplus activation
     scaling it to [0, inf] and then a Clamping to fix it in the range [min_sd, max_sd] = [1e-8, 10] by default.
     """
-    def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10, prior=):
+    def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.min_sd = min_sd
         self.max_sd = max_sd
+        self.prior = torch.distributions.Independent(
+            torch.distributions.Normal(
+                loc=torch.zeros(self.out_features).to(get_device()),
+                scale=torch.ones(self.out_features).to(get_device())
+                ),
+            1
+        )
 
         self.mu = nn.Linear(in_features, out_features)
         self.scale = nn.Sequential(
@@ -72,43 +80,26 @@ class GaussianLayer(Distribution):
             Clamp(min=min_sd, max=max_sd)
         )
         self.initialize()
-    
-    def initialize(self):
-        # Gain is that of ReLU for scale since it's close to the SoftPlus
-        gain = nn.init.calculate_gain('relu')
-        nn.init.xavier_normal_(self.scale[0].weight, gain=gain)
-        # For the mean there is no nonlinearity so we simply take gain to be 1
-        nn.init.xavier_normal_(self.mu.weight, gain=1.)
 
-    def get_prior(self, mu=None, scale=None):
-        if mu is None and scale is None:
-            return torch.distributions.Independent(torch.distributions.Normal(
-                loc=torch.zeros(self.out_features).to(get_device()),
-                scale=torch.ones(self.out_features).to(get_device())
-            ), 1)
-            # NOTE The below allows using analytical KL divergence directly without modifications to torch
-            # return torch.distributions.MultivariateNormal(
-            #     loc=torch.zeros(self.out_features).to(get_device()),
-            #     covariance_matrix=torch.eye(self.out_features).to(get_device())
-            # )
-        return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
-        # NOTE The below allows using analytical KL divergence directly without modifications to torch
-        # cov = torch.diag_embed(scale ** 2)
-        # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
+    def initialize(self):
+        gain = nn.init.calculate_gain('relu')
+        nn.init.xavier_normal_(self.scale[0].weight, gain=gain)  # For scale gain is ReLU's since it's close to SoftPlus
+        nn.init.xavier_normal_(self.mu.weight, gain=1.)  # For mean there is no nonlinearity so take gain to be 1
 
     def forward(self, x):
         mu = self.mu(x)
         scale = self.scale(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, scale), 1)
-        # NOTE The below allows using analytical KL divergence directly without modifications to torch
-        # cov = torch.diag_embed(scale ** 2)  # [B, D] B batches of D scales --> [B, D, D] B batches of diagonal DxD matrices
-        # return torch.distributions.MultivariateNormal(loc=mu, covariance_matrix=cov)
         
     def extra_repr(self):
-        return f'min_sd={self.min_sd}, max_sd={self.max_sd}'
+        s = 'kwargs={\n'
+        for k in ['min_sd', 'max_sd']:
+            s += f'  {k}={getattr(self, k)},\n'
+        s = s[:-2] + '\n}'
+        return s
 
 
-class GaussianFixedVarianceLayer(Distribution):
+class GaussianFixedVarianceLayer(LearnableDistribution):
     """Layer that parameterizes a Gaussian distribution by its mean and a fixed standard deviation.
     
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
@@ -131,27 +122,34 @@ class GaussianFixedVarianceLayer(Distribution):
         self.in_features = in_features
         self.out_features = out_features
         self.std = std
+        
+        self.prior = torch.distributions.Independent(
+            torch.distributions.Normal(
+                loc=torch.zeros(self.out_features).to(get_device()),
+                scale=std * torch.ones(out_features).to(get_device())
+                ),
+            reinterpreted_batch_ndims=1
+        )
 
         self.mu = nn.Linear(in_features, out_features)
-        self.scale = std * torch.ones(out_features).to(get_device())
         self.initialize()
         
     def initialize(self):
-        # For the mean there is no nonlinearity so we simply take gain to be 1
-        nn.init.xavier_normal_(self.mu.weight, gain=1.)
-        
-    def get_prior(self):
-        return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), 1)
+        nn.init.xavier_normal_(self.mu.weight, gain=1.)  # For mean there is no nonlinearity so take gain to be 1
 
     def forward(self, x):
         mu = self.mu(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), 1)
     
     def extra_repr(self):
-        return f'std={self.std}'
+        s = 'kwargs={\n'
+        for k in ['std']:
+            s += f'  {k}={getattr(self, k)},\n'
+        s = s[:-2] + '\n}'
+        return s
 
 
-class BernoulliLayer(Distribution):
+class BernoulliLayer(LearnableDistribution):
     """Layer that parameterizes a Bernoulli distribution."""
     def __init__(self, in_features, out_features):
         super().__init__()
@@ -184,7 +182,7 @@ class BernoulliLayer(Distribution):
 #         return -binary_cross_entropy_with_logits(logits, value, reduction='none')
     
     
-class ContinuousBernoulliLayer(Distribution):
+class ContinuousBernoulliLayer(LearnableDistribution):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
@@ -206,7 +204,7 @@ class ContinuousBernoulliLayer(Distribution):
         return log_continuous_bernoulli(x, p)
         
 
-class GaussianMerge(Distribution):
+class GaussianMerge(LearnableDistribution):
     """
     Precision weighted merging of two Gaussian
     distributions.
@@ -234,7 +232,7 @@ class GaussianMerge(Distribution):
         return self.reparametrize(mu, log_var), (mu, log_var)
 
 
-class GumbelSoftmax(Distribution):
+class GumbelSoftmax(LearnableDistribution):
     """
     Layer that represents a sample from a categorical
     distribution. Enables sampling and stochastic

@@ -39,19 +39,21 @@ def default_configuration():
 
     n_epochs = 1000
     batch_size = 256
-    importance_samples = 100
+    importance_samples = 1
     learning_rate = 3e-4
     warmup_epochs = 0
+    free_nats = -np.inf
     
     model_kwargs = dict(
         x_dim=2,
         z_dim=[2, 2],
         h_dim=[[64, 64], [32, 32]],
-        activation=torch.nn.ELU
+        activation=torch.nn.Tanh
     )
-
-    device = get_device()
+    
+    test_importance_samples = set([1, importance_samples, 100])
     seed = 0
+    device = get_device()
 
 
 @ex.config
@@ -62,8 +64,8 @@ def dependent_configuration(model_kwargs):
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
-        warmup_epochs, seed):
-
+        warmup_epochs, free_nats, test_importance_samples, seed):
+    
     # Print config, set threads and seed
     pprint(ex.current_run.config)
     if device == 'cpu':
@@ -72,16 +74,17 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
     np.random.seed(seed)
 
     # Get dataset, model, optimizer and other
-    train_dataset = getattr(vari.datasets, dataset_name)
-    train_dataset = train_dataset(**dataset_kwargs)
+    dataset = getattr(vari.datasets, dataset_name)
+    train_dataset = dataset(**dataset_kwargs)
+    test_dataset = dataset(**dataset_kwargs, seed=2)
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                               num_workers=2, pin_memory=device=='cuda')
-    test_loader = train_loader
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=2, pin_memory=device=='cuda')
 
     model, model_kwargs = build_dense_vae(**model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
-    torch.load(f'{ex.models_dir()}/model_kwargs.pkl')  # Check loading
     model.to(device)
     print(model)
     summary(model, (np.prod(train_dataset[0][0].shape),))
@@ -93,11 +96,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    if isinstance(model, vari.models.vae.HierarchicalVariationalAutoencoder):
-        pz_samples = model.encoder[-1].distribution.get_prior().sample(torch.Size([1000]))
-    else:
-        pz_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
-
+    pz_samples = model.encoder[-1].distribution.prior.sample(torch.Size([10000]))
     try:
         while epoch < n_epochs:
             model.train()
@@ -111,7 +110,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
 
                 # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
-                                                             reduce_importance_samples=False)
+                                                             free_nats=free_nats, reduce_importance_samples=False)
                 
                 kl_divergences_1iw = {k: v[0, ...] for k, v in model.kl_divergences.items()}
                 elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
@@ -181,41 +180,47 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                     px = model.generate(z=pz_samples)
                     np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
 
-                    x, _ = next(iter(test_loader))
+                    x, y = next(iter(test_loader))
+                    x = x.view(x.shape[0], np.prod(x.shape[1:]))
                     latents = model.encode(x.to(device))
+                    px = model.decode(latents)
                     torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
+                    torch.save(px, f'{ex.models_dir()}/epoch_{epoch}_model_outputs.pkl')
+                    torch.save({'x': x, 'y': y}, f'{ex.models_dir()}/epoch_{epoch}_model_inputs.pkl')
                 
-                # model.eval()
-                # for iws in sorted(set([1, importance_samples])):
-                #     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
-                #     for b, (x, _) in enumerate(test_loader):
-                #         x = x.to(device)
+                model.eval()
+                for iws in sorted(test_importance_samples):
+                    total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
+                    # Dynamic batch size depending on the number of importance samples
+                    # test_loader = DataLoader(test_dataset, batch_size=(batch_size * 3) // iws + 1, shuffle=True, num_workers=2, pin_memory=device=='cuda')
+                    for b, (x, _) in enumerate(test_loader):
+                        x = x.to(device)
 
-                #         x = x.view(x.shape[0], np.prod(x.shape[1:]))
-                #         elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
+                        x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                        elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
 
-                #         total_elbo += elbo.mean().item()
-                #         total_likelihood += likelihood.mean().item()
-                #         total_kl += kl_divergence.mean().item()
-                #         for k, v in model.kl_divergences.items():
-                #             total_kls[k] += v.mean().item()
+                        total_elbo += elbo.mean().item()
+                        total_likelihood += likelihood.mean().item()
+                        total_kl += kl_divergence.mean().item()
+                        for k, v in model.kl_divergences.items():
+                            total_kls[k] += v.mean().item()
 
-                #     total_elbo /= len(test_loader)
-                #     total_likelihood /= len(test_loader)
-                #     total_kl /= len(test_loader)
+                    total_elbo /= len(test_loader)
+                    total_likelihood /= len(test_loader)
+                    total_kl /= len(test_loader)
 
-                #     ex.log_scalar(f'[TEST] IW={iws} log p(x)', total_elbo, step=epoch)
-                #     ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
-                #     ex.log_scalar(f'[TEST] IW={iws} KL(q||p)', total_kl, step=epoch)
-                #     ex.log_scalar(f'[TEST] IW={iws} ß·KL(q||p)', beta * total_kl, step=epoch)
-                #     for k, v in total_kls.items():
-                #         ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(test_loader), step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} log p(x)', total_elbo, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} log p(x|z)', total_likelihood, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} KL(q||p)', total_kl, step=epoch)
+                    ex.log_scalar(f'[TEST] IW={iws} ß·KL(q||p)', beta * total_kl, step=epoch)
+                    for k, v in total_kls.items():
+                        ex.log_scalar(f'[TEST] IW={iws} KL for {k}', v / len(test_loader), step=epoch)
 
-                #     s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
-                #     if len(total_kls) > 1:
-                #         for k, v in total_kls.items():
-                #             s += f' | KL {k} {v / len(test_loader):2.4f}'
-                #     print(s)
+                    s = f'[TEST] IW {iws:<3d} | Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f}'
+                    if len(total_kls) > 1:
+                        for k, v in total_kls.items():
+                            s += f' | KL {k} {v / len(test_loader):2.4f}'
+                    print(s)
 
             epoch += 1
 

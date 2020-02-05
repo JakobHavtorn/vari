@@ -44,14 +44,16 @@ def default_configuration():
     importance_samples = 10
     learning_rate = 3e-4
     warmup_epochs = 0
+    free_nats = -np.inf
     
     model_kwargs = dict(
         x_dim=784,
         z_dim=[5, 2],
         h_dim=[[512, 512], [256, 256]],
+        activation=torch.nn.LeakyReLU
     )
 
-    test_importance_samples = [1, importance_samples, 100]
+    test_importance_samples = set([1, importance_samples, 100])
     device = get_device()
     seed = 0
 
@@ -64,7 +66,7 @@ def dependent_configuration(model_kwargs):
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
-        warmup_epochs, test_importance_samples, seed):
+        warmup_epochs, free_nats, test_importance_samples, seed):
 
     # Print config, set threads and seed
     pprint(ex.current_run.config)
@@ -83,7 +85,6 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
 
     model, model_kwargs = build_dense_vae(**model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
-    torch.load(f'{ex.models_dir()}/model_kwargs.pkl')  # Check loading
     model.to(device)
     print(model)
     summary(model, (np.prod(train_dataset[0][0].shape),))
@@ -95,10 +96,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
     epoch = 0
     i_update = 0
     best_elbo = -1e10
-    if isinstance(model, vari.models.vae.HierarchicalVariationalAutoencoder):
-        pz_samples = model.encoder[-1].distribution.get_prior().sample(torch.Size([1000]))
-    else:
-        pz_samples = model.encoder.distribution.get_prior().sample(torch.Size([1000]))
+    pz_samples = model.encoder[-1].distribution.prior.sample(torch.Size([1000]))
 
     try:
         while epoch < n_epochs:
@@ -114,7 +112,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 x = x.view(x.shape[0], np.prod(x.shape[1:]))
                 # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
-                                                             reduce_importance_samples=False)
+                                                             free_nats=free_nats, reduce_importance_samples=False)
                 
                 kl_divergences_1iw = {k: v[0, ...] for k, v in model.kl_divergences.items()}
                 elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
@@ -184,13 +182,16 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                     px = model.generate(z=pz_samples)
                     np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
 
-                    x, _ = next(iter(test_loader))
+                    x, y = next(iter(test_loader))
                     x = x.view(x.shape[0], np.prod(x.shape[1:]))
                     latents = model.encode(x.to(device))
+                    px = model.decode(latents)
                     torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
+                    torch.save(px, f'{ex.models_dir()}/epoch_{epoch}_model_outputs.pkl')
+                    torch.save({'x': x, 'y': y}, f'{ex.models_dir()}/epoch_{epoch}_model_inputs.pkl')
                 
                 model.eval()
-                for iws in sorted(set(test_importance_samples)):
+                for iws in sorted(test_importance_samples):
                     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
                     # Dynamic batch size depending on the number of importance samples
                     test_loader = DataLoader(test_dataset, batch_size=(batch_size * 3) // iws + 1, shuffle=True, num_workers=2, pin_memory=device=='cuda')

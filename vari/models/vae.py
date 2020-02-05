@@ -11,25 +11,6 @@ from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussi
 from vari.utilities import get_device, log_sum_exp
 
 
-class MultiLayeredPerceptron(nn.Module):
-    def __init__(self, dims, activation_fn=F.relu, output_activation=None):
-        super().__init__()
-        self.dims = dims
-        self.activation_fn = activation_fn
-        self.output_activation = output_activation
-
-        self.layers = nn.ModuleList(list(map(lambda d: nn.Linear(*d), list(zip(dims, dims[1:])))))
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i == len(self.layers)-1 and self.output_activation is not None:
-                x = self.output_activation(x)
-            else:
-                x = self.activation_fn(x)
-        return x
-
-
 class DenseSequentialCoder(nn.Module):
     """
     Coder network that can parameterize a distribution, variational or not.
@@ -44,19 +25,17 @@ class DenseSequentialCoder(nn.Module):
 
     Arguments:
         x_dim (int): Dimensionality of the inputs to be expected e.g. 784
-        z_dim (int); Dimensionality of the latent space (regularized to conform to the prior of the `distribution`)
         h_dim (list of int): Dimensionality of the intermediate hidden affine nonlinear transformations.
         activation (nn.Activation): The activation function to apply between affine layers.
         distribution (vari.layers): The model that parameterizes the distribution of the latent space.
+                                    Must take [*, h_dim[-1]] tensor as input and give [*, z_dim] tensor as output.
     """
-    def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, distribution=GaussianLayer):
+    def __init__(self, x_dim, h_dim, distribution, activation=nn.Tanh):
         super().__init__()
-        assert isinstance(x_dim, int) and isinstance(z_dim, int) and isinstance(h_dim, list)
+        assert isinstance(x_dim, int) and isinstance(h_dim, list)
         self.x_dim = x_dim
-        self.z_dim = z_dim
         self.h_dim = h_dim
         self._activation = activation
-        self._distribution = distribution
 
         modules = []
         dims = [x_dim, *self.h_dim]
@@ -65,7 +44,7 @@ class DenseSequentialCoder(nn.Module):
             if activation is not None:
                 modules.append(activation())
         self.coder = nn.Sequential(*modules)
-        self.distribution = distribution(self.h_dim[-1], z_dim)
+        self.distribution = distribution
         self.initialize()
 
     def initialize(self):
@@ -76,11 +55,9 @@ class DenseSequentialCoder(nn.Module):
         else:
             name = self._activation().__class__.__name__.lower()
             gain = nn.init.calculate_gain(name, param=None)
-        i = 0
+
         for m in self.coder.modules():
             if isinstance(m, nn.Linear):
-                print(i, m)
-                i += 1
                 nn.init.xavier_normal_(m.weight, gain=gain)
                 if m.bias is not None:
                     m.bias.data.zero_()
@@ -116,7 +93,8 @@ class VariationalAutoencoder(nn.Module):
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, reduce_importance_samples=True, analytical_kl=False):
+    def elbo(self, x, importance_samples=1, beta=1, analytical_kl=False, free_nats=-np.inf,
+             reduce_importance_samples=True,):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -125,23 +103,24 @@ class VariationalAutoencoder(nn.Module):
             importance_samples (int, optional): Number of importance samples to use. Defaults to None.
             beta (int, optional): Value of ß for the ß-VAE or deterministic warmup parameter. Defaults to 1.
             analytical_kl (bool, optional): Whether to compute KL divergence between q(z|x) and p(z) analytically.
+            free_nats (bool, optional): How many nats to consider free in the KL terms.
             reduce_importance_samples (bool, optional): Whether to return elbo, likelihood and KL reduced over samples.
 
         Returns:
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples, analytical_kl=analytical_kl)
+        self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
+        kl_divergence = self.kl_divergence
 
         if reduce_importance_samples:
-            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
-        return elbo, likelihood, self.kl_divergence
+            elbo, likelihood, kl_divergence = self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
+        return elbo, likelihood, kl_divergence.clamp_(min=free_nats)
 
     def reduce_importance_samples(self, elbo, likelihood, kl_divergences):
         self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
-        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
-        # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
 
     def encode(self, x, importance_samples=1):
@@ -166,9 +145,9 @@ class VariationalAutoencoder(nn.Module):
         z, qz = latent['z']['sample'], latent['z']['distribution']
         px = self.decode(z)  # Generative p(x|z)
         if analytical_kl:
-            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.get_prior())[None, ...]
+            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.prior)[None, ...]
         else:
-            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.get_prior().log_prob(z)
+            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.prior.log_prob(z)
         return px
 
     def generate(self, n_samples=None, z=None, seed=None):
@@ -181,7 +160,7 @@ class VariationalAutoencoder(nn.Module):
             torch.manual_seed(seed)
         if z is not None:
             return self.decode(z)
-        z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
+        z = self.encoder.distribution.prior.sample(torch.Size([n_samples]))
         return self.decode(z)
 
 
@@ -204,7 +183,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, reduce_importance_samples=True, copy_latents=None):
+    def elbo(self, x, importance_samples=1, beta=1, free_nats=-np.inf, reduce_importance_samples=True, copy_latents=None):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -212,11 +191,13 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             x (tensor): Inputs of shape [N, *, D] where N is batch and D is input dimension (potentially more than one)
             importance_samples ([type], optional): [description]. Defaults to None.
             beta (int, optional): [description]. Defaults to 1.
+            free_nats (bool, optional): How many nats to consider free in the KL terms.
 
         Returns:
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples, copy_latents=copy_latents)
+        self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
 
@@ -261,14 +242,14 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             qz_samples, qz = latents[z_key]
             if z_index == self.n_layers:  # At top we use prior for KL
                 self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
-                                                        self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
+                                                        self.encoder[-1].distribution.prior.log_prob(qz_samples)
             else:
                 self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
             if copy_latents is None or copy_latents[z_key]:  # Copy latents from layer below for decoding (and KL)
                 pz = self.decoder[-z_index](qz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  q(z_{i}|z_{i-1}) or q(z_1|x)
             else:
                 if z_index == self.n_layers:
-                    pz = self.encoder[-1].distribution.get_prior()
+                    pz = self.encoder[-1].distribution.prior
                     pz_samples = pz.rsample(qz.batch_shape)
                 else:
                     pz_samples = pz.rsample()
@@ -302,7 +283,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             torch.manual_seed(seed)
         if z is not None:
             return decode(z)
-        z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
+        z = self.encoder.distribution.prior.sample(torch.Size([n_samples]))
         return decode(z)
 
 
