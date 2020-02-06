@@ -176,7 +176,7 @@ class MNISTReal(MNISTBinarized):
         
         Implemented as in [1].
         
-        [1] The continuous Bernoulli: ﬁxing a pervasive error in variational autoencoders
+        [1] The continuous Bernoulli: fixing a pervasive error in variational autoencoders
             http://arxiv.org/abs/1907.06845
         """
         assert self.gamma <= 0.5 and self.gamma >= -0.5
@@ -272,3 +272,14 @@ class FashionMNISTBinarized(MNISTBinarized):
                  transform=None, target_transform=None, download=True):
         super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
                          transform=transform, target_transform=target_transform, download=download)
+
+
+
+class CIFAR10Real(MNISTReal):
+    _data_source = torchvision.datasets.CIFAR10
+    
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
+                 transform=None, target_transform=None, download=True):
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
+                         transform=transform, target_transform=target_transform, download=download)
+    

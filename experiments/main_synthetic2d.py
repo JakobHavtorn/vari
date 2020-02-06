@@ -42,7 +42,7 @@ def default_configuration():
     importance_samples = 1
     learning_rate = 3e-4
     warmup_epochs = 0
-    free_nats = -np.inf
+    free_nats = None
     
     model_kwargs = dict(
         x_dim=2,

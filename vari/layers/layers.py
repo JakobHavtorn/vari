@@ -47,6 +47,7 @@ class Clamp(nn.Module):
 class LearnableDistribution(nn.Module):
     def initialize(self):
         raise NotImplementedError
+    
 
 
 class GaussianLayer(LearnableDistribution):

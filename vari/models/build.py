@@ -21,7 +21,7 @@ def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribut
     dec_dims = enc_dims[::-1]  # reverse
     h_dim_rev = [h[::-1] for h in h_dim][::-1]  # reverse [[a, b], [c, d]] --> [[d, c], [b, a]]
 
-    if skip_connections is not None:
+    if skip_connections:
         skip_connections = nn.ModuleList()
         for i in range(1, len(h_dim)):
             skip_connections.append(

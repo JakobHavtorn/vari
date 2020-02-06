@@ -93,7 +93,7 @@ class VariationalAutoencoder(nn.Module):
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, analytical_kl=False, free_nats=-np.inf,
+    def elbo(self, x, importance_samples=1, beta=1, analytical_kl=False, free_nats=None,
              reduce_importance_samples=True,):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
@@ -110,7 +110,8 @@ class VariationalAutoencoder(nn.Module):
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples, analytical_kl=analytical_kl)
-        self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
+        if free_nats is not None:
+            self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
         kl_divergence = self.kl_divergence
@@ -184,7 +185,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, free_nats=-np.inf, reduce_importance_samples=True, copy_latents=None):
+    def elbo(self, x, importance_samples=1, beta=1, free_nats=None, reduce_importance_samples=True, copy_latents=None):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -198,7 +199,8 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples, copy_latents=copy_latents)
-        self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
+        if free_nats is not None:
+            self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
 
@@ -214,14 +216,12 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
         """
         latents = OrderedDict()
-        if self.skip_connections is not None:
+        if self.skip_connections:
             h = self.encoder[0].coder(x)
             qz = self.encoder[0].distribution(h)
             z = qz.rsample(torch.Size([importance_samples]))
             latents[f'z1'] = (z, qz)
             for i, (encoder, skip_connection) in enumerate(zip(self.encoder[1:], self.skip_connections), start=2):
-                # import IPython
-                # IPython.embed()
                 h_skip = skip_connection(h)
                 h = encoder.coder(z)
                 h = h + h_skip
