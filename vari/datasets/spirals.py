@@ -36,8 +36,8 @@ def make_data_spiral(n_samples=10000, shuffle=True, noise=0.0, rotation=0, start
 
 
 class Spirals(Dataset):
-    def __init__(self, n_samples=1000, noise=0.05, rotation=0, start_radius=np.pi, rounds=1, seed=0):
-        examples, labels = make_data_spiral(n_samples=n_samples, noise=noise, rotation=rotation,
+    def __init__(self, n_samples=1000, shuffle=True, noise=0.05, rotation=0, start_radius=np.pi, rounds=1, seed=0):
+        examples, labels = make_data_spiral(n_samples=n_samples, shuffle=shuffle, noise=noise, rotation=rotation,
                                             start_radius=start_radius, rounds=rounds, seed=seed)
         self.n_samples = n_samples
         self.noise = noise
