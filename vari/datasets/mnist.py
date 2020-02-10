@@ -1,6 +1,6 @@
 """Module with MNIST-like datasets
 
-MNISTBinarized and MNISTReal form the parent classes of the remaining datasets.
+MNISTBinarized and MNISTContinuous form the parent classes of the remaining datasets.
 """
 
 import os
@@ -121,7 +121,7 @@ class MNISTBinarized(Dataset):
         return s + ')'
 
 
-class MNISTReal(MNISTBinarized):
+class MNISTContinuous(MNISTBinarized):
     """MNIST dataset including filtering and concationation of train and test sets.
     
     Serves real values in [0, 1].
@@ -249,9 +249,9 @@ class MNISTBinarizedLarochelle(Dataset):
         return s + ')'
 
 
-class FashionMNISTReal(MNISTReal):
+class FashionMNISTContinuous(MNISTContinuous):
     """FashionMNIST dataset including filtering and concationation of train and test sets. 
-    See MNISTReal.
+    See MNISTContinuous.
     """
 
     _data_source = torchvision.datasets.FashionMNIST
@@ -275,7 +275,7 @@ class FashionMNISTBinarized(MNISTBinarized):
 
 
 
-class CIFAR10Real(MNISTReal):
+class CIFAR10Continuous(MNISTContinuous):
     _data_source = torchvision.datasets.CIFAR10
     
     def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
