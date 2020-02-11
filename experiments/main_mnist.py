@@ -170,26 +170,8 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                     s += f' | KL {k} {v / len(train_loader):2.4f}'
             print(s)
 
-
-            if epoch % 10 == 0 and total_elbo > best_elbo and deterministic_warmup.is_done:
-                best_elbo = total_elbo
-                best_kl = total_kl
-                best_likelihood = total_likelihood
-                torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
-                print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
-                
-                with torch.no_grad():
-                    px = model.generate(z=pz_samples)
-                    np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
-
-                    x, y = next(iter(test_loader))
-                    x = x.view(x.shape[0], np.prod(x.shape[1:]))
-                    latents = model.encode(x.to(device))
-                    px = model.decode(latents)
-                    torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
-                    torch.save(px, f'{ex.models_dir()}/epoch_{epoch}_model_outputs.pkl')
-                    torch.save({'x': x, 'y': y}, f'{ex.models_dir()}/epoch_{epoch}_model_inputs.pkl')
-                
+            if epoch % 50 == 0:
+                # Evaluate model
                 model.eval()
                 for iws in sorted(test_importance_samples):
                     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
@@ -223,7 +205,28 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                         for k, v in total_kls.items():
                             s += f' | KL {k} {v / len(test_loader):2.4f}'
                     print(s)
+                    
+                # Dump encodings and decodings
+                with torch.no_grad():
+                    px = model.generate(z=pz_samples)
+                    np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
 
+                    x, y = next(iter(test_loader))
+                    x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                    latents = model.encode(x.to(device))
+                    px = model.decode(latents)
+                    torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
+                    torch.save(px, f'{ex.models_dir()}/epoch_{epoch}_model_outputs.pkl')
+                    torch.save({'x': x, 'y': y}, f'{ex.models_dir()}/epoch_{epoch}_model_inputs.pkl')
+
+                # Save model
+                if total_elbo > best_elbo and deterministic_warmup.is_done:
+                    best_elbo = total_elbo
+                    best_kl = total_kl
+                    best_likelihood = total_likelihood
+                    torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
+                    print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
+                    
             epoch += 1
 
     except KeyboardInterrupt:
