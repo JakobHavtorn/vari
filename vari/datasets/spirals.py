@@ -27,7 +27,8 @@ def make_data_spiral(n_samples=10000, shuffle=True, noise=0.0, rotation=0, start
     res_b = np.append(x_b, np.ones((n_samples, 1)), axis=1)
 
     res = np.append(res_a, res_b, axis=0)
-    np.random.shuffle(res)
+    if shuffle:
+        np.random.shuffle(res)
 
     values = res[:, :2] / normalizing_constant  # Normalize to have radii of 2π scaled down to 2π/normalizing_constant
     values += noise * np.random.randn(*values.shape)  # Add noise
