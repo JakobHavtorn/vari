@@ -98,6 +98,66 @@ class GaussianLayer(LearnableDistribution):
             s += f'  {k}={getattr(self, k)},\n'
         s = s[:-2] + '\n}'
         return s
+    
+    
+class BetaLayer(LearnableDistribution):
+    """Layer that parameterizes a number of independent Beta distributions by the alpha and beta vectors.
+    
+    The distribution is continuous and has support [0, 1].
+    
+    The layer outputs a torch.distributions.Independent wrapped torch.distribution.Beta.
+    
+    Both the alpha and beta parameter is parameterized by a linear tranformation followed by a Softplus activation and
+    potentially clamps the maximum value.
+    """
+    def __init__(self, in_features, out_features, min_alpha=0.5, max_alpha=10, min_beta=0.5, max_beta=10,
+                 prior=None):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.max_alpha = max_alpha
+        self.max_beta = max_beta
+        self.prior = self.default_prior if prior is None else prior
+
+        alpha = [nn.Linear(in_features, out_features), nn.Softplus()]
+        if min_alpha is not None or max_alpha is not None:
+            alpha.append(Clamp(min=min_alpha, max=max_alpha))
+        beta = [nn.Linear(in_features, out_features), nn.Softplus()]
+        if min_beta is not None or max_beta is not None:
+            beta.append(Clamp(min=min_beta, max=max_beta))
+        self.alpha = nn.Sequential(*alpha)
+        self.beta = nn.Sequential(*beta)
+        self.initialize()
+
+    @property
+    def default_prior(self):
+        # Uniform distribution by alpha = beta = 1
+        return torch.distributions.Independent(
+            torch.distributions.Beta(
+                concentration0=torch.ones(self.out_features).to(get_device()),
+                concentration1=torch.ones(self.out_features).to(get_device())
+            ),
+            1
+        )
+
+    def initialize(self):
+        gain = nn.init.calculate_gain('relu')
+        nn.init.xavier_normal_(self.beta[0].weight, gain=gain)
+        nn.init.xavier_normal_(self.alpha[0].weight, gain=gain)
+
+    def forward(self, x):
+        alpha = self.alpha(x)
+        beta = self.beta(x)
+        print(round(alpha.min().item(), 3), round(alpha.max().item(), 3))
+        print(round(beta.min().item(), 3), round(beta.max().item(), 3))
+        return torch.distributions.Independent(torch.distributions.Beta(alpha, beta), 1)
+
+    def extra_repr(self):
+        s = 'kwargs={\n'
+        for k in ['max_alpha', 'max_beta']:
+            s += f'  {k}={getattr(self, k)},\n'
+        s = s[:-2] + '\n}'
+        return s
 
 
 class GaussianFixedVarianceLayer(LearnableDistribution):
