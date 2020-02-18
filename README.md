@@ -27,11 +27,15 @@ For reference and sanity checking, here are some estimates of the maximum attain
 
 ## Improvement projects
 
-- Improve generality of code in case of convolutional coders
+- Stochastic (distribution) layers should expect logits as input. I.e. if they have trainable transformations on the input
+  they should apply their own activations.
+
+- Make all stochastic (distribution) layers take in the dimensionality of the space (1, 2, ...). Currently only 1D is
+  supported but for image outputs it would be easier to have the output space be 2D for images.
+
+- Make importance weighting a wrapper around any model that wraps the `forward` call and first repeats the input iw times
 
 - Add evaluators to make logging on metrics easier and take up less code in experiment files
-
-- Add better stopping/saving criteria
 
 - Improve experiment setups with configuration files that can be read
 
