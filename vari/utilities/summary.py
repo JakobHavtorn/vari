@@ -90,9 +90,10 @@ def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, devi
 
     # assume 4 bytes/number (float on cuda).
     total_input_size = np.prod(input_size) * batch_size * 4. / 1e6
-    total_output_size = 2 * total_output * 4. / 1e6  # x2 for gradients
+    total_output_size = total_output * 4. / 1e6  # x2 for gradients
     total_params_size = total_params.item() * 4. / 1e6
-    total_size = total_params_size + total_output_size + total_input_size
+    total_gradients_size = total_params.item() * 4. / 1e6
+    total_size = total_params_size + total_gradients_size + total_output_size + total_input_size
 
     print("==============================================================================================")
     print("Total params: {0:,}".format(total_params))
@@ -100,8 +101,9 @@ def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, devi
     print("Non-trainable params: {0:,}".format(total_params - trainable_params))
     print("----------------------------------------------------------------------------------------------")
     print("Input size (MB): %0.2f" % total_input_size)
-    print("Forward/backward pass size (MB): %0.2f" % total_output_size)
+    print("Forward pass size (MB): %0.2f" % total_output_size)
     print("Parameters size (MB): %0.2f" % total_params_size)
+    print("Gradients size (MB): %0.2f" % total_gradients_size)
     print("Estimated Total Size (MB): %0.2f" % total_size)
     print("----------------------------------------------------------------------------------------------")
     # return summary
