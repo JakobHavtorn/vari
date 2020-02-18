@@ -255,7 +255,7 @@ class BernoulliLayer(LearnableDistribution):
         self.out_features = out_features
 
         if in_features is not None:
-            self.p = nn.Linear(in_features, out_features))
+            self.p = nn.Linear(in_features, out_features)
             self.initialize()
         else:
             self.p = Identity()
