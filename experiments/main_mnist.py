@@ -17,7 +17,7 @@ import vari.models.vae
 import vari.datasets
 
 from vari.layers import GaussianLayer
-from vari.models import build_dense_vae
+from vari.models import build_dense_vae, build_conv_vae
 from vari.utilities import get_device, summary
 from vari.inference import DeterministicWarmup
 
@@ -44,28 +44,115 @@ def default_configuration():
     importance_samples = 10
     learning_rate = 3e-4
     warmup_epochs = 0
-    free_nats = -np.inf
+    free_nats = None
     
-    model_kwargs = dict(
-        x_dim=784,
-        z_dim=[5, 2],
-        h_dim=[[512, 512], [256, 256]],
-        activation=torch.nn.LeakyReLU
-    )
+    model_type = 'conv'
+    if True:  #model_type == 'dense':
+        build_kwargs = dict(
+            x_dim=784,
+            z_dim=[5, 2],
+            h_dim=[[512, 512], [256, 256]],
+            activation=torch.nn.LeakyReLU()
+        )
+    elif model_type == 'conv':
+        encoders = [
+            {
+                'name': 'Conv2dSequentialCoder',
+                'kwargs': {
+                    'in_channels': 1,
+                    'n_filters': [128, 256],
+                    'kernels': [(4, 4), (4, 4)],
+                    'strides': [2, 2],
+                    'transpose': False,
+                    'activation': torch.nn.LeakyReLU
+                },
+            },
+            # {
+            #     'name': 'DenseSequentialCoder',
+            #     'kwargs': {
+            #         'x_dim': 64,
+            #         'h_dim': [128, 128],
+            #         'activation': torch.nn.LeakyReLU
+            #     }
+            # }
+        ]
+        encoder_distributions = [
+            {
+                'name': 'GaussianLayer',
+                'kwargs': {
+                    'in_features': 256,
+                    'out_features': 64,
+                }
+            },
+            # {
+            #     'name': 'GaussianLayer',
+            #     'kwargs': {
+            #         'in_features': 128,
+            #         'out_features': 32,
+            #     }
+            # }
+        ]
+        decoders = [
+            # {
+            #     'name': 'DenseSequentialCoder',
+            #     'kwargs': {
+            #         'x_dim': 32,
+            #         'h_dim': [128, 128],
+            #         'activation': torch.nn.LeakyReLU
+            #     }
+            # },
+            {
+                'name': 'Conv2dSequentialCoder',
+                'kwargs': {
+                    'in_channels': 64,
+                    'n_filters': [128, 128],
+                    'kernels': [(4, 4), (4, 4)],
+                    'strides': [2, 2],
+                    'transpose': True,
+                    'activation': torch.nn.LeakyReLU()
+                },
+            },
+        ]
+        decoder_distributions = [
+            # {
+            #     'name': 'GaussianLayer',
+            #     'kwargs': {
+            #         'in_features': 256,
+            #         'out_features': 64,
+            #     }
+            # },
+            {
+                'name': 'BernoulliLayer',
+                'kwargs': {
+                    'dimensions': 2,
+                }
+            }
+        ]
+        build_kwargs = dict(
+            encoders=encoders,
+            decoders=decoders,
+            encoder_distributions=encoder_distributions,
+            decoder_distributions=decoder_distributions,
+        )
+        model, model_kwargs = build_conv_vae(**build_kwargs)
+    else:
+        raise ValueError(f'Unknown model_type {model_type}')
+    
 
     test_importance_samples = set([1, importance_samples, 100])
     device = get_device()
     seed = 0
 
-
-@ex.config
-def dependent_configuration(model_kwargs):
-    model_kwargs['encoder_distribution'] = ['GaussianLayer'] * len(model_kwargs['z_dim'])
-    model_kwargs['decoder_distribution'] = ['GaussianLayer'] * (len(model_kwargs['z_dim']) - 1) + ['BernoulliLayer']
+    build_kwargs['encoder_distribution'] = ['GaussianLayer'] * len(build_kwargs['z_dim'])
+    build_kwargs['decoder_distribution'] = ['GaussianLayer'] * (len(build_kwargs['z_dim']) - 1)
+    if 'Continuous' in dataset_name:
+        build_kwargs['decoder_distribution'].append('BetaLayer')
+    elif 'Binarized' in dataset_name:
+        build_kwargs['decoder_distribution'].append('BernoulliLayer')
 
 
 @ex.automain
-def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
+def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
         warmup_epochs, free_nats, test_importance_samples, seed):
 
     # Print config, set threads and seed
@@ -83,11 +170,11 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
 
-    model, model_kwargs = build_dense_vae(**model_kwargs)
+    model, model_kwargs = build_dense_vae(**build_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
     model.to(device)
     print(model)
-    summary(model, (np.prod(train_dataset[0][0].shape),))
+    summary(model, model.in_shape, batch_size=batch_size)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
@@ -109,19 +196,25 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
 
                 optimizer.zero_grad()
 
-                x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                x = x.view(x.shape[0], *model.in_shape)
                 # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
+                # try:
+                #     with torch.autograd.detect_anomaly():
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
-                                                             free_nats=free_nats, reduce_importance_samples=False)
-                
-                kl_divergences_1iw = {k: v[0, ...] for k, v in model.kl_divergences.items()}
-                elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0, ...], likelihood[0, ...], kl_divergence[0, ...]
+                                                            free_nats=free_nats, reduce_importance_samples=False)
+
+                kl_divergences_1iw = {k: v[0] for k, v in model.kl_divergences.items()}
+                elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0], likelihood[0], kl_divergence[0]
                 kl_divergences = model.kl_divergences
-                elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergences)
+                elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergences, importance_samples)
 
                 loss = - torch.mean(elbo)
                 loss.backward()
                 optimizer.step()
+                # print(i_update, elbo.mean().item())
+                # except RuntimeError:
+                #     import IPython
+                #     IPython.embed()
 
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
@@ -133,7 +226,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                 total_kl_1iw += kl_divergence_1iw.mean().item()
                 for k, v in kl_divergences_1iw.items():
                     total_kls_1iw[k] += v.mean().item()
-
+                
                 # ex.log_scalar(f'(batch) ELBO log p(x)', elbo.mean().item(), step=i_update)
                 # ex.log_scalar(f'(batch) log p(x|z)', likelihood.mean().item(), step=i_update)
                 # ex.log_scalar(f'(batch) KL(q(z|x)||p(z))', kl_divergence.mean().item(), step=i_update)
@@ -180,7 +273,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                     for b, (x, _) in enumerate(test_loader):
                         x = x.to(device)
 
-                        x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                        x = x.view(x.shape[0], *model.in_shape)
                         elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=iws, beta=1)
 
                         total_elbo += elbo.mean().item()
@@ -212,7 +305,7 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
                     np.save(f'{ex.models_dir()}/epoch_{epoch}_model_samples', px.mean.cpu().detach().numpy())
 
                     x, y = next(iter(test_loader))
-                    x = x.view(x.shape[0], np.prod(x.shape[1:]))
+                    x = x.view(x.shape[0], *model.in_shape)
                     latents = model.encode(x.to(device))
                     px = model.decode(latents)
                     torch.save(latents, f'{ex.models_dir()}/epoch_{epoch}_model_latents.pkl')
