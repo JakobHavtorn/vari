@@ -19,7 +19,7 @@ import vari.datasets
 from vari.layers import GaussianLayer
 from vari.models import build_dense_vae, build_conv_vae
 from vari.utilities import get_device, summary
-from vari.inference import DeterministicWarmup
+from vari.inference import DeterministicWarmup, FreeNatsCooldown
 
 import IPython
 
@@ -32,6 +32,7 @@ ex = Experiment(name='OOD VAE')
 @ex.config
 def default_configuration():
     tag = 'ood-detection'
+    extra_tag = '23.02.2020'
 
     dataset_name = 'MNISTBinarized'
     dataset_kwargs = dict(
@@ -52,7 +53,7 @@ def default_configuration():
             x_dim=784,
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
-            activation=torch.nn.LeakyReLU()
+            activation=torch.nn.LeakyReLU(),
         )
     elif model_type == 'conv':
         encoders = [
@@ -146,6 +147,8 @@ def default_configuration():
     build_kwargs['encoder_distribution'] = ['GaussianLayer'] * len(build_kwargs['z_dim'])
     build_kwargs['decoder_distribution'] = ['GaussianLayer'] * (len(build_kwargs['z_dim']) - 1)
     if 'Continuous' in dataset_name:
+        # build_kwargs['decoder_distribution'].append('GaussianLayer')
+        # build_kwargs['decoder_distribution'].append('ContinuousBernoulliLayer')
         build_kwargs['decoder_distribution'].append('BetaLayer')
     elif 'Binarized' in dataset_name:
         build_kwargs['decoder_distribution'].append('BernoulliLayer')
@@ -167,18 +170,19 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
     train_dataset = dataset(split='train', **dataset_kwargs)
     test_dataset = dataset(split='test', **dataset_kwargs)
     print(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=device=='cuda')
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=device=='cuda')
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=device=='cuda')
 
     model, model_kwargs = build_dense_vae(**build_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
     model.to(device)
     print(model)
-    summary(model, model.in_shape, batch_size=batch_size)
+    summary(model, model.in_shape, batch_size=batch_size * importance_samples)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     deterministic_warmup = DeterministicWarmup(n=warmup_epochs)
+    free_nats_cooldown = FreeNatsCooldown(constant_epochs=warmup_epochs, cooldown_epochs=warmup_epochs, start_val=free_nats)
 
     epoch = 0
     i_update = 0
@@ -191,27 +195,30 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
             total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
             total_elbo_1iw, total_kl_1iw, total_likelihood_1iw, total_kls_1iw = 0, 0, 0, defaultdict(lambda: 0)
             beta = next(deterministic_warmup)
+            free_nats = next(free_nats_cooldown)
             for b, (x, _) in enumerate(train_loader):
                 x = x.to(device)
 
                 optimizer.zero_grad()
 
-                x = x.view(x.shape[0], *model.in_shape)
                 # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
                 # try:
                 #     with torch.autograd.detect_anomaly():
+                x = x.view(x.shape[0], *model.in_shape)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
-                                                            free_nats=free_nats, reduce_importance_samples=False)
-
+                                                                free_nats=free_nats, reduce_importance_samples=False)
                 kl_divergences_1iw = {k: v[0] for k, v in model.kl_divergences.items()}
                 elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0], likelihood[0], kl_divergence[0]
                 kl_divergences = model.kl_divergences
                 elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergences, importance_samples)
 
                 loss = - torch.mean(elbo)
+                if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    continue
+
                 loss.backward()
                 optimizer.step()
-                # print(i_update, elbo.mean().item())
+                #         print(i_update, elbo.mean().item())
                 # except RuntimeError:
                 #     import IPython
                 #     IPython.embed()
@@ -248,7 +255,6 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
             ex.log_scalar(f'IW {importance_samples} ß·KL(q||p)', beta * total_kl, step=epoch)
             for k, v in total_kls.items():
                 ex.log_scalar(f'IW {importance_samples} KL for {k}', v / len(train_loader), step=epoch)
-            
             if importance_samples != 1:
                 ex.log_scalar(f'IW 1 log p(x)', total_elbo_1iw, step=epoch)
                 ex.log_scalar(f'IW 1 log p(x|z)', total_likelihood_1iw, step=epoch)
@@ -256,6 +262,7 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
                 ex.log_scalar(f'IW 1 ß·KL(q||p)', beta * total_kl_1iw, step=epoch)
                 for k, v in total_kls_1iw.items():
                     ex.log_scalar(f'IW 1 KL for {k}', v / len(train_loader), step=epoch)
+            ex.log_scalar(f'Free nats', free_nats, step=epoch)
                 
             s = f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}'
             if len(total_kls) > 1:
