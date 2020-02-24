@@ -27,10 +27,14 @@ _triple = _ntuple(3)
 _quadruple = _ntuple(4)
 
 
-def get_device():
+def get_device(idx=None):
     if 'CUDA_VISIBLE_DEVICES' in os.environ and torch.cuda.is_available():
-        return 'cuda'
-    return 'cpu'
+        global_device_indices = [int(i.rstrip().lstrip()) for i in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        local_device_indices = list(range(len(global_device_indices)))
+        if idx is None:
+            return torch.device('cuda:0')
+        return torch.device(f'cuda:{local_device_indices[idx]}')
+    return torch.device('cpu')
 
 
 def enumerate_discrete(x, y_dim):
