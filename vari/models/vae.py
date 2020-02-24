@@ -35,14 +35,15 @@ class DenseSequentialCoder(nn.Module):
         distribution (vari.layers): The model that parameterizes the distribution of the latent space.
                                     Must take [*, h_dim[-1]] tensor as input and give [*, z_dim] tensor as output.
     """
-    def __init__(self, x_dim, h_dim, distribution, activation=nn.LeakyReLU()):
+    def __init__(self, x_dim, h_dim, distribution, activation=nn.LeakyReLU(), batchnorm=False):
         super().__init__()
         assert isinstance(x_dim, int) and isinstance(h_dim, list)
         self.x_dim = x_dim
         self.h_dim = h_dim
         self.activation = activation
+        self.batchnorm = batchnorm
 
-        self.coder = self.build_coder(x_dim, h_dim, activation)
+        self.coder = self.build_coder(x_dim, h_dim, activation, batchnorm)
         self.distribution = distribution
         self.initialize()
         
@@ -51,11 +52,15 @@ class DenseSequentialCoder(nn.Module):
         return (self.x_dim,)
 
     @staticmethod
-    def build_coder(x_dim, h_dim, activation):
+    def build_coder(x_dim, h_dim, activation, batchnorm):
         modules = []
         dims = [x_dim, *h_dim]
+        if batchnorm:
+            modules.append(nn.BatchNorm1d(dims[0]))
         for i in range(1, len(dims)):
             modules.append(nn.Linear(dims[i-1], dims[i]))
+            if batchnorm:
+                modules.append(nn.BatchNorm1d(dims[i])) 
             if activation is not None:
                 modules.append(copy.deepcopy(activation))
         return nn.Sequential(*modules)

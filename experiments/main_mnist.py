@@ -32,7 +32,7 @@ ex = Experiment(name='OOD VAE')
 @ex.config
 def default_configuration():
     tag = 'ood-detection'
-    extra_tag = '23.02.2020'
+    extra_tag = '24.02.2020'
 
     dataset_name = 'MNISTBinarized'
     dataset_kwargs = dict(
@@ -54,6 +54,7 @@ def default_configuration():
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
             activation=torch.nn.LeakyReLU(),
+            batchnorm=False,
         )
     elif model_type == 'conv':
         encoders = [
@@ -182,7 +183,7 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     deterministic_warmup = DeterministicWarmup(n=warmup_epochs)
-    free_nats_cooldown = FreeNatsCooldown(constant_epochs=warmup_epochs, cooldown_epochs=warmup_epochs, start_val=free_nats)
+    free_nats_cooldown = FreeNatsCooldown(constant_epochs=int(warmup_epochs * 3), cooldown_epochs=warmup_epochs, start_val=free_nats)
 
     epoch = 0
     i_update = 0
@@ -262,7 +263,8 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
                 ex.log_scalar(f'IW 1 ß·KL(q||p)', beta * total_kl_1iw, step=epoch)
                 for k, v in total_kls_1iw.items():
                     ex.log_scalar(f'IW 1 KL for {k}', v / len(train_loader), step=epoch)
-            ex.log_scalar(f'Free nats', free_nats, step=epoch)
+            if free_nats is not None:
+                ex.log_scalar(f'Free nats', free_nats, step=epoch)
                 
             s = f'Epoch {epoch:3d} | ELBO {total_elbo: 2.4f} | log p(x|z) {total_likelihood: 2.4f} | KL {total_kl:2.4f} | ß*KL {beta * total_kl:2.4f}'
             if len(total_kls) > 1:

@@ -4,7 +4,7 @@ import vari.models
 
 
 def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribution, encoder_distribution_kwargs=None,
-                    decoder_distribution_kwargs=None, activation=nn.Tanh, skip_connections=None):
+                    decoder_distribution_kwargs=None, activation=nn.Tanh, batchnorm=False, skip_connections=None):
     """Build a densely connected multilayered VAE.
     
     Example:
@@ -54,7 +54,8 @@ def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribut
                     out_features=enc_dims[i],
                     **encoder_distribution_kwargs[i - 1]
                 ),
-                activation=activation
+                activation=activation,
+                batchnorm=batchnorm
             )
         )
         decoder.append(
@@ -66,7 +67,8 @@ def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribut
                     out_features=dec_dims[i],
                     **decoder_distribution_kwargs[i - 1]
                 ),
-                activation=activation
+                activation=activation,
+                batchnorm=batchnorm
             )
         )
 
