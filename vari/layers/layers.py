@@ -7,41 +7,10 @@ import torch.distributions
 
 from torch.autograd import Variable
 
+from vari.distributions import ContinuousBernoulli
+from vari.layers.convenience import AddConstant, Clamp, Identity
 from vari.utilities import get_device
 from vari.inference.distributions import log_gaussian, log_bernoulli
-
-
-class Identity(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        
-    def forward(self, x):
-        return x
-
-
-class AddConstant(nn.Module):
-    def __init__(self, constant):
-        super().__init__()
-        self.constant = constant
-        
-    def forward(self, tensor1):
-        return tensor1 + self.constant
-
-    def __repr__(self):
-        return f'AddConstant({self.constant})'
-
-
-class Clamp(nn.Module):
-    def __init__(self, min=None, max=None):
-        super().__init__()
-        self.min = min if min is not None else -float('inf')
-        self.max = max if max is not None else float('inf')
-        
-    def forward(self, tensor):
-        return tensor.clamp(min=self.min, max=self.max)
-
-    def __repr__(self):
-        return f'Clamp({self.min, self.max})'
 
 
 class LearnableDistribution(nn.Module):
@@ -54,7 +23,7 @@ class LearnableDistribution(nn.Module):
 
 
 class GaussianLayer(LearnableDistribution):
-    """Layer that parameterizes a diagonal covariance Gaussian distribution by its mean and standard deviation vectors.
+    r"""Layer that parameterizes a diagonal covariance Gaussian distribution by its mean and standard deviation vectors.
     
     The distribution is continuous and support [-inf, inf].
     
@@ -63,7 +32,7 @@ class GaussianLayer(LearnableDistribution):
     
     The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
     The standard deviation is parameterized by a linear transformation of the input followed by a softplus activation
-    scaling it to [0, inf] and then a Clamping to fix it in the range [min_sd, max_sd] = [1e-8, 10] by default.
+    scaling it to [0, inf] and then an AddConstant and/or Clamping to fix it in the range [min_sd, max_sd].
     
     TODO Rename scale to sd
     """
@@ -76,12 +45,17 @@ class GaussianLayer(LearnableDistribution):
         self.prior = self.default_prior if prior is None else prior
 
         self.mu = nn.Linear(in_features, out_features)
-        scale = [nn.Linear(in_features, out_features), nn.Softplus()]
-        if min_sd is not None or max_sd is not None:
-            scale.append(Clamp(min=min_sd, max=max_sd))
-        self.scale = nn.Sequential(*scale)
+        self.scale = self.build_sd_parameter(min_sd, max_sd)
         self.initialize()
-        
+
+    def build_sd_parameter(self, min_val, max_val):
+        sd = [nn.Linear(self.in_features, self.out_features), nn.Softplus()]
+        if min_val is not None and min_val != 0:
+            sd.append(AddConstant(min_val))
+        if max_val is not None:
+            sd.append(Clamp(max=max_val))
+        return nn.Sequential(*sd)
+
     @property
     def default_prior(self):
         # Standard Gaussian prior N(0,1)
@@ -117,38 +91,51 @@ class GaussianLayer(LearnableDistribution):
     
     
 class BetaLayer(LearnableDistribution):
-    """Layer that parameterizes a number of independent Beta distributions by the alpha and beta vectors.
+    r"""Layer that parameterizes a number of independent Beta distributions by the alpha and beta vectors.
     
     The distribution is continuous and has support [0, 1].
     
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Beta.
     
     Both the alpha and beta parameter is parameterized by a linear tranformation followed by a Softplus activation and
-    potentially clamps the maximum value.
+    potentially clamps the minimum and/or maximum value.
+    
+    Note that the Beta distribution is bimodal if α, β < 1. 
+    
+    The mode is
+     - \frac{\alpha-1}{\alpha+\beta-2} for α, β >1
+     - any value in (0,1) for α, β = 1
+     - 0 for α ≤ 1, β > 1
+     - 1 for α > 1, β ≤ 1
+     - {0, 1} (bimodal) for α, β < 1
     """
-    def __init__(self, in_features, out_features, min_alpha=1e-4, max_alpha=5, min_beta=1e-4, max_beta=5,
+    def __init__(self, in_features, out_features, min_alpha=1e-3, max_alpha=None, min_beta=1e-3, max_beta=None,
                  prior=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.min_alpha = min_alpha
+        self.min_beta = min_beta
         self.max_alpha = max_alpha
         self.max_beta = max_beta
         self.prior = self.default_prior if prior is None else prior
 
-        alpha = [nn.Linear(in_features, out_features), nn.Softplus()]
-        if min_alpha is not None or max_alpha is not None:
-            alpha.append(Clamp(min=min_alpha, max=max_alpha))
-        beta = [nn.Linear(in_features, out_features), nn.Softplus()]
-        if min_beta is not None or max_beta is not None:
-            beta.append(Clamp(min=min_beta, max=max_beta))
-        self.alpha = nn.Sequential(*alpha)
-        self.beta = nn.Sequential(*beta)
+        self.alpha = self.build_concentration_parameter(min_alpha, max_alpha)
+        self.beta = self.build_concentration_parameter(min_beta, max_beta)
         # self.mu = nn.Linear(in_features, out_features)
         # var = [nn.Linear(in_features, out_features), nn.Softplus()]
         # if min_beta is not None or max_beta is not None:
         #     var.append(Clamp(min=min_beta, max=max_beta))
         # self.var = nn.Sequential(*var)
         self.initialize()
+
+    def build_concentration_parameter(self, min_val, max_val):
+        concentration = [nn.Linear(self.in_features, self.out_features), nn.Softplus()]
+        if min_val is not None and min_val != 0:
+            concentration.append(AddConstant(min_val))
+        if max_val is not None:
+            concentration.append(Clamp(max=max_val))
+        return nn.Sequential(*concentration)
 
     @property
     def default_prior(self):
@@ -163,15 +150,14 @@ class BetaLayer(LearnableDistribution):
 
     def initialize(self):
         gain = nn.init.calculate_gain('relu')
-        nn.init.xavier_normal_(self.beta[0].weight, gain=gain)
         nn.init.xavier_normal_(self.alpha[0].weight, gain=gain)
+        nn.init.xavier_normal_(self.beta[0].weight, gain=gain)
         # nn.init.xavier_normal_(self.mu.weight, gain=1)
         # nn.init.xavier_normal_(self.var[0].weight, gain=gain)
 
     def forward(self, x):
         alpha = self.alpha(x)
         beta = self.beta(x)
-        
         # mu = self.mu(x)
         # var = self.var(x)
         # tmp = mu * (1 - mu)
@@ -179,14 +165,11 @@ class BetaLayer(LearnableDistribution):
         # nu = tmp / var - 1
         # alpha = mu * nu
         # beta = (1 - mu) * nu
-        
-        print(round(alpha.min().item(), 3), round(alpha.max().item(), 3))
-        print(round(beta.min().item(), 3), round(beta.max().item(), 3))
         return torch.distributions.Independent(torch.distributions.Beta(alpha, beta), x.ndim - 1)
 
     def extra_repr(self):
         s = 'kwargs={\n'
-        for k in ['max_alpha', 'max_beta']:
+        for k in ['min_alpha', 'max_alpha', 'min_beta', 'max_beta']:
             s += f'  {k}={getattr(self, k)},\n'
         s = s[:-2] + '\n}'
         return s
@@ -256,40 +239,28 @@ class BernoulliLayer(LearnableDistribution):
 
         if in_features is not None:
             self.p = nn.Linear(in_features, out_features)
-            self.initialize()
         else:
             self.p = Identity()
+        self.initialize()
     
     def initialize(self):
-        gain = nn.init.calculate_gain('sigmoid')
-        nn.init.xavier_normal_(self.p[0].weight, gain=gain)
+        if self.in_features is not None:
+            gain = nn.init.calculate_gain('sigmoid')  # Bernoulli distribution converts logits to probs with sigmoid
+            nn.init.xavier_normal_(self.p.weight, gain=gain)
 
     def forward(self, x):
         p = self.p(x)
         return torch.distributions.Independent(torch.distributions.Bernoulli(logits=p), x.ndim - 1)
-    
-    
-class ContinuousBernoulliLayer(LearnableDistribution):
-    def __init__(self, in_features, out_features):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
 
-        self.p = nn.Sequential(
-            nn.Linear(in_features, out_features),
-            nn.Sigmoid()
-        )
+
+class ContinuousBernoulliLayer(BernoulliLayer):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features=in_features, out_features=out_features)
         
     def forward(self, x):
-        raise NotImplementedError()
-        # TODO Need to sublcass torch.distributions.Bernoulli to change log_prob and entropy with the normalizing
-        # constant
         p = self.p(x)
-        return torch.distributions.Independent(torch.distributions.Bernoulli(probs=p), 1)
+        return torch.distributions.Independent(ContinuousBernoulli(logits=p), x.ndim - 1)
     
-    def log_likelihood(self, x, p):
-        return log_continuous_bernoulli(x, p)
-        
 
 class GaussianMerge(LearnableDistribution):
     """

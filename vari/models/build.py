@@ -3,7 +3,7 @@ import torch.nn as nn
 import vari.models
 
 
-def build_dense_vae_org(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribution, encoder_distribution_kwargs=None,
+def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribution, encoder_distribution_kwargs=None,
                     decoder_distribution_kwargs=None, activation=nn.Tanh, skip_connections=None):
     """Build a densely connected multilayered VAE.
     
@@ -78,7 +78,7 @@ def build_dense_vae_org(x_dim, z_dim, h_dim, encoder_distribution, decoder_distr
     return vari.models.HierarchicalVariationalAutoencoder(**vae_kwargs), vae_kwargs
 
 
-def build_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribution, encoder_distribution_kwargs=None,
+def build_conv_dense_vae(x_dim, z_dim, h_dim, encoder_distribution, decoder_distribution, encoder_distribution_kwargs=None,
                     decoder_distribution_kwargs=None, activation=nn.Tanh, skip_connections=None):
     """Build a densely connected multilayered VAE.
     
