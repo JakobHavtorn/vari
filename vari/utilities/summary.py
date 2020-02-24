@@ -6,7 +6,7 @@ from collections import OrderedDict
 import numpy as np
 
 
-def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, device='cuda'):
+def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, device=None):
 
     def register_hook(module):
         # TODO Make this hooking aware of the depth within the model
@@ -40,15 +40,13 @@ def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, devi
         if not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model):
             hooks.append(module.register_forward_hook(hook))
 
-    device = device.lower()
-    assert device in ["cuda", "cpu",], "Input device is not valid, please specify 'cuda' or 'cpu'"
-    # assert batch_size > 1, 'Batch size must be larger than 1 for layers such as BatchNormalization'
-
     # multiple inputs to the network
     if isinstance(input_size, tuple):
         input_size = [input_size]
 
     # batch_size of 2 for batchnorm
+    if device is None:
+        device = next(model.parameters()).device  # Device of first parameters in model
     x = [torch.rand(batch_size, *in_size).to(device) for in_size in input_size]
 
     # create properties
