@@ -44,7 +44,7 @@ class MNISTBinarized(Dataset):
     _data_source = torchvision.datasets.MNIST
     _repr_attributes = ['split', 'exclude_labels', 'preprocess', 'seed', 'root']
 
-    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', threshold=0.5, seed=0, root='torch_data/',
                  transform=None, target_transform=None, download=True):
         super().__init__()
         
@@ -54,6 +54,7 @@ class MNISTBinarized(Dataset):
         self.split = split
         self.exclude_labels = [] if exclude_labels is None else exclude_labels
         self.preprocess = preprocess
+        self.threshold = threshold
         self.seed = seed
         self.root = root
 
@@ -75,8 +76,7 @@ class MNISTBinarized(Dataset):
             self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
 
         if preprocess in ['static', 'deterministic']:
-            self.examples = self.scale(self.examples)
-            self.examples = self.warp(self.examples)
+            self.examples = self.warp(self.scale(self.examples))
 
         self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
 
@@ -106,7 +106,7 @@ class MNISTBinarized(Dataset):
 
     def warp(self, examples):
         if self.preprocess == 'deterministic':
-            idx = examples >= 0.5
+            idx = examples >= self.threshold
             examples[idx] = 1.0
             examples[~idx] = 0.0
             return examples
@@ -119,6 +119,19 @@ class MNISTBinarized(Dataset):
         s = f'{self.__class__.__name__}('
         s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in self._repr_attributes])
         return s + ')'
+
+
+class FashionMNISTBinarized(MNISTBinarized):
+    """FashionMNIST dataset including filtering and concationation of train and test sets.
+    See MNISTBinarized.
+    """
+    _data_source = torchvision.datasets.FashionMNIST
+
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', threshold=0.5, seed=0,
+                 root='torch_data/', transform=None, target_transform=None, download=True):
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, threshold=threshold,
+                         seed=seed, root=root, transform=transform, target_transform=target_transform,
+                         download=download)
 
 
 class MNISTContinuous(MNISTBinarized):
@@ -151,6 +164,8 @@ class MNISTContinuous(MNISTBinarized):
                  transform=None, target_transform=None, download=True):
         assert gamma <= 0.5 and gamma >= -0.5, 'gamma must be in [-0.5, 0.5]'
         self.gamma = gamma
+        self.random_generator = np.random.default_rng(seed=seed)  # Allows specifying dtype when sampling
+        self._float_32_resolution = np.finfo(np.float32).resolution
         super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
                          transform=transform, target_transform=target_transform, download=download)
 
@@ -162,9 +177,10 @@ class MNISTContinuous(MNISTBinarized):
         """
         examples = examples.astype(np.float32)
         if self.preprocess != 'deterministic':
-            noise_matrix = np.random.rand(*examples.shape)
+            noise_matrix = self.random_generator.random(size=examples.shape, dtype=np.float32)  # np.random.rand(*examples.shape)
             examples += noise_matrix
             examples /= 256
+            np.clip(examples, 10*self._float_32_resolution, 1 - 10*self._float_32_resolution, out=examples)
         else:
             examples /= 255
         return examples
@@ -190,6 +206,30 @@ class MNISTContinuous(MNISTBinarized):
         if self.gamma < 0:
             return np.clip((examples + self.gamma) / (1 + 2 * self.gamma), 0, 1)
         return self.gamma + (1 - 2 * self.gamma) * examples
+    
+
+class FashionMNISTContinuous(MNISTContinuous):
+    """FashionMNIST dataset including filtering and concationation of train and test sets. 
+    See MNISTContinuous.
+    """
+    _data_source = torchvision.datasets.FashionMNIST
+
+    def __init__(self, split='train', exclude_labels=None, gamma=0.0, preprocess='dynamic', seed=0, root='torch_data/',
+                 transform=None, target_transform=None, download=True):
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, gamma=gamma, seed=seed,
+                         root=root, transform=transform, target_transform=target_transform, download=download)
+
+
+class CIFAR10Continuous(MNISTContinuous):
+    """FashionMNIST dataset including filtering and concationation of train and test sets. 
+    See MNISTContinuous.
+    """
+    _data_source = torchvision.datasets.CIFAR10
+    
+    def __init__(self, split='train', exclude_labels=None, gamma=0.0, preprocess='dynamic', seed=0, root='torch_data/',
+                 transform=None, target_transform=None, download=True):
+        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, gamma=gamma, seed=seed,
+                         root=root, transform=transform, target_transform=target_transform, download=download)
     
 
 class MNISTBinarizedLarochelle(Dataset):
@@ -248,38 +288,3 @@ class MNISTBinarizedLarochelle(Dataset):
         s += ', '.join([f'{attr}={getattr(self, attr)}' for attr in ['split', 'exclude_labels']])
         return s + ')'
 
-
-class FashionMNISTContinuous(MNISTContinuous):
-    """FashionMNIST dataset including filtering and concationation of train and test sets. 
-    See MNISTContinuous.
-    """
-
-    _data_source = torchvision.datasets.FashionMNIST
-
-    def __init__(self, split='train', exclude_labels=None, gamma=0.0, preprocess='dynamic', seed=0, root='torch_data/',
-                 transform=None, target_transform=None, download=True):
-        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, gamma=gamma, seed=seed,
-                         root=root, transform=transform, target_transform=target_transform, download=download)
-        
-
-class FashionMNISTBinarized(MNISTBinarized):
-    """FashionMNIST dataset including filtering and concationation of train and test sets.
-    See MNISTBinarized.
-    """
-    _data_source = torchvision.datasets.FashionMNIST
-
-    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
-                 transform=None, target_transform=None, download=True):
-        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
-                         transform=transform, target_transform=target_transform, download=download)
-
-
-
-class CIFAR10Continuous(MNISTContinuous):
-    _data_source = torchvision.datasets.CIFAR10
-    
-    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', seed=0, root='torch_data/',
-                 transform=None, target_transform=None, download=True):
-        super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, seed=seed, root=root,
-                         transform=transform, target_transform=target_transform, download=download)
-    
