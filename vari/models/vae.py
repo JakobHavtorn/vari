@@ -41,11 +41,14 @@ class DenseSequentialCoder(nn.Module):
         self.x_dim = x_dim
         self.h_dim = h_dim
         self.activation = activation
-        self.in_shape = (x_dim,)
 
         self.coder = self.build_coder(x_dim, h_dim, activation)
         self.distribution = distribution
         self.initialize()
+        
+    @property
+    def in_shape(self):
+        return (self.x_dim,)
 
     @staticmethod
     def build_coder(x_dim, h_dim, activation):
@@ -97,7 +100,7 @@ class Conv2dSequentialCoder(nn.Module):
     Returns the distribution (with batch dimension) that encodes a batch of examples (x or z).
 
     Arguments:
-        in_channels (int): Number of input channels to be expected e.g. 1.
+        in_shape (tuple): Shape of the input excluding the batch dimension, e.g. (1, 28, 28)
         h_dim (dict of list): filters, kernels and strides (optional) of the convolutions.
         activation (nn.Activation): The activation function to apply between affine layers.
         distribution (vari.layers): The model that parameterizes the distribution of the latent space.
@@ -236,6 +239,10 @@ class VariationalAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.kl_divergences = OrderedDict([('z', 0)])
+        
+    @property
+    def in_shape(self):
+        return self.encoder.in_shape
 
     @property
     def kl_divergence(self):
@@ -325,10 +332,13 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.in_shape = encoder[0].in_shape
         self.n_layers = len(encoder)
         self.kl_divergences = OrderedDict([(f'z{i+1}', 0) for i in range(0, self.n_layers)])
         self.skip_connections = skip_connections
+        
+    @property
+    def in_shape(self):
+        return self.encoder[0].in_shape
 
     @property
     def kl_divergence(self):
@@ -345,13 +355,23 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             free_nats (bool, optional): How many nats to consider free in the KL terms.
 
         Returns:
-            [type]: [description]
+            tuple: ELBO log p(x), likelihood log p(x|z) and KL divergence per latent variable
         """
         x = x.repeat(importance_samples, *(1,) * (x.ndim - 1))  # Importance sampling [B * IS, D1, D2, ...]
         px = self.forward(x, copy_latents=copy_latents)
         if free_nats is not None:
             self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        
+        # print(f'mean           {px.mean.mean().item():.2f} {px.mean.std().item():.2f}')
+        # print(f'variance       {px.variance.mean().item():.2f} {px.variance.std().item():.2f}')
+        # print(f'concentration0 {px.base_dist.concentration0.mean().item():.2f} {px.base_dist.concentration0.std().item():.2f}')
+        # print(f'concentration1 {px.base_dist.concentration1.mean().item():.2f} {px.base_dist.concentration1.std().item():.2f}')
+        # if torch.isinf(likelihood).any().item():
+        #     print(x.max())
+        #     import IPython
+        #     IPython.embed()
+        # likelihood[torch.isinf(likelihood)] = 1000
         elbo = likelihood - beta * self.kl_divergence
 
         if reduce_importance_samples:
@@ -364,7 +384,16 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
 
     def encode(self, x):
-        """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
+        """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x).
+        
+        Skip connections:   x ––> h1 ––> z1 ––> h2 ––> z2 ––> h3 ––> z3 ––> h4 ––> z4
+                                  |–––––––––––> + ––––––––––> + ––––––––––> +
+                            h1 = f1(x)
+                            z1 = g1(h1)
+                            h2 = f2(z1) + linear_map(h1)
+                            z2 = g2(h2)
+                            h3 = f2(z2) + linear_map(h2)
+                            ...
         """
         latents = OrderedDict()
         if self.skip_connections:

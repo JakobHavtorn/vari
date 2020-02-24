@@ -1,8 +1,10 @@
 from itertools import repeat
 
+import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
+
+from torch import nn
 
 from vari.utilities import log_sum_exp, enumerate_discrete
 from vari.inference.distributions import log_standard_categorical
@@ -29,6 +31,35 @@ class ImportanceWeightedSampler():
         elbo = elbo.view(self.mc, self.iw, -1)
         elbo = torch.mean(log_sum_exp(elbo, dim=1, sum_op=torch.mean), dim=0)
         return elbo.view(-1)
+
+
+class FreeNatsCooldown():
+    """Linear deterministic warm-up as described in [Sønderby 2016]. 
+    """
+    def __init__(self, constant_epochs=200, cooldown_epochs=200, start_val=0.2, end_val=None):
+        self.constant_epochs = constant_epochs
+        self.cooldown_epochs = cooldown_epochs
+        self.start_val = start_val
+        self.end_val = start_val if constant_epochs == cooldown_epochs == 0 else end_val  # Start val if zero duration
+        end_val = 0 if end_val is None else end_val
+        self.values = np.concatenate([
+            np.array([start_val] * constant_epochs),  # [start_val, start_val, ..., start_val]
+            np.linspace(start_val, end_val, cooldown_epochs)  # [start_val, ..., end_val]
+        ])
+        self.i_epoch = -1
+
+    @property
+    def is_done(self):
+        return not self.i_epoch < len(self.values)
+
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        self.i_epoch += 1
+        if self.is_done:
+            return self.end_val
+        return self.values[self.i_epoch]
 
 
 class DeterministicWarmup():
