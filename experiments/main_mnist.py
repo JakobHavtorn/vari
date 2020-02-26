@@ -17,7 +17,7 @@ import vari.models.vae
 import vari.datasets
 
 from vari.layers import GaussianLayer
-from vari.models import build_dense_vae, build_conv_vae
+from vari.models import build_dense_vae, build_conv_vae, build_conv_dense_vae
 from vari.utilities import get_device, summary
 from vari.inference import DeterministicWarmup, FreeNatsCooldown
 
@@ -183,7 +183,8 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     deterministic_warmup = DeterministicWarmup(n=warmup_epochs)
-    free_nats_cooldown = FreeNatsCooldown(constant_epochs=int(warmup_epochs * 3), cooldown_epochs=warmup_epochs, start_val=free_nats)
+    free_nats_cooldown = FreeNatsCooldown(constant_epochs=int(warmup_epochs * 3), cooldown_epochs=warmup_epochs,
+                                          start_val=free_nats, end_val=None)
 
     epoch = 0
     i_update = 0
@@ -215,6 +216,10 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
 
                 loss = - torch.mean(elbo)
                 if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    if torch.isnan(loss).any():
+                        ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was NaN! (skipped)')
+                    else:
+                        ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was Inf! (skipped)')
                     continue
 
                 loss.backward()

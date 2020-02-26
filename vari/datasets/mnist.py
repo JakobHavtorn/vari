@@ -44,8 +44,8 @@ class MNISTBinarized(Dataset):
     _data_source = torchvision.datasets.MNIST
     _repr_attributes = ['split', 'exclude_labels', 'preprocess', 'seed', 'root']
 
-    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', threshold=0.5, seed=0, root='torch_data/',
-                 transform=None, target_transform=None, download=True):
+    def __init__(self, split='train', exclude_labels=None, preprocess='dynamic', threshold=0.5, seed=0,
+                 root='torch_data/', transform=None, target_transform=None, download=True):
         super().__init__()
         
         assert preprocess in ['dynamic', 'static', 'deterministic']

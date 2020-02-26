@@ -366,7 +366,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         px = self.forward(x, copy_latents=copy_latents)
         if free_nats is not None:
             self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
-        likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        likelihood = px.log_prob(x.view(*px.batch_shape, *px.event_shape))
         
         # print(f'mean           {px.mean.mean().item():.2f} {px.mean.std().item():.2f}')
         # print(f'variance       {px.variance.mean().item():.2f} {px.variance.std().item():.2f}')
@@ -475,6 +475,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         Generate samples from the generative model by either sampling `n_samples` from the prior p(z) or by decoding
         the given latent representation `z`. In both cases, setting `seed` can make decoding reproducible.
         """
+        assert (n_samples is not None) != (z is not None), 'Specify either n_samples or z.'
         def decode(z):
             for decoder in self.decoder:
                 pz = decoder(z)
