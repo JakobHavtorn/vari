@@ -79,10 +79,8 @@ def run(device, dataset_name, dataset_kwargs, model_kwargs, n_epochs, batch_size
     train_dataset = dataset(**dataset_kwargs)
     test_dataset = dataset(**dataset_kwargs, seed=2)
     print(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                              num_workers=2, pin_memory=device=='cuda')
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True,
-                              num_workers=2, pin_memory=device=='cuda')
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=2, pin_memory=device.type=='cuda')
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=True, num_workers=2, pin_memory=device.type=='cuda')
 
     model, model_kwargs = build_dense_vae(**model_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')

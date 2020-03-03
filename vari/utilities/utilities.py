@@ -1,6 +1,7 @@
 import os
 import math
 
+from collections import OrderedDict
 from itertools import repeat
 
 import torch
@@ -18,11 +19,9 @@ def _ntuple(n):
         return tuple(repeat(x, n))
     return parse
 
-def _pair(n):
-    return _ntuple(2)(n)
 
 _single = _ntuple(1)
-#_pair = _ntuple(2)
+_pair = _ntuple(2)
 _triple = _ntuple(3)
 _quadruple = _ntuple(4)
 
@@ -141,6 +140,7 @@ def compute_convolution_output_dimensions(i, k, s=None, p=None, transposed=False
         return [regular_conv(_i, _k, _s, _p) for _i, _k, _s, _p in zip(i, k, s, p)]
     return [transposed_conv(_i, _k, _s, _p) for _i, _k, _s, _p in zip(i, k, s, p)]
 
+
 def compute_output_padding(i, k, s=None, p=None):
     """
     Compute the amount of zero padding to add to the bottom and right edges of the input of a tranposed convolution
@@ -172,3 +172,85 @@ def compute_output_padding(i, k, s=None, p=None):
     p = (p,) * len(i) if isinstance(p, int) else p
 
     return [_compute_output_padding(_i, _k, _s, _p) for _i, _k, _s, _p in zip(i, k, s, p)]
+
+
+def remove_outliers(*data, thresh=3.5):
+    out = []
+    ids = []
+    for d in data:
+        idx = is_outlier(d, thresh=thresh)
+        out.append(d[~idx])
+        ids.append(idx)
+    return (out, ids) if len(out) > 1 else (out[0], ids[0])
+
+
+def is_outlier(points, thresh=3.5):
+    """
+    Returns a boolean array with True if points are outliers and False 
+    otherwise.
+
+    Parameters:
+    -----------
+        points : An numobservations by numdimensions array of observations
+        thresh : The modified z-score to use as a threshold. Observations with
+            a modified z-score (based on the median absolute deviation) greater
+            than this value will be classified as outliers.
+
+    Returns:
+    --------
+        mask : A numobservations-length boolean array.
+
+    References:
+    ----------
+        Boris Iglewicz and David Hoaglin (1993), "Volume 16: How to Detect and
+        Handle Outliers", The ASQC Basic References in Quality Control:
+        Statistical Techniques, Edward F. Mykytka, Ph.D., Editor. 
+    """
+    if len(points.shape) == 1:
+        points = points[:,None]
+    median = torch.median(points, axis=0).values
+    diff = torch.sum((points - median)**2, axis=-1)
+    diff = torch.sqrt(diff)
+    med_abs_deviation = torch.median(diff)
+
+    modified_z_score = 0.6745 * diff / med_abs_deviation
+
+    return modified_z_score > thresh
+
+
+def concatenate_on_keys(list_of_dict):
+    dict_of_array = OrderedDict()
+    for kl in list_of_dict:
+        for k, v in kl.items():
+            if k not in dict_of_array:
+                dict_of_array[k] = v
+            else:
+                dict_of_array[k] = torch.cat([dict_of_array[k], v])
+    return dict_of_array
+
+
+def compute_dataset_elbo(model, loader, device='cpu', **kwargs):
+    all_elbo = []
+    all_likelihood = []
+    all_kl = []
+    all_kls = []
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device, non_blocking=False)
+            elbo, like, kl = model.elbo(x.view(x.shape[0], *model.in_shape), **kwargs)
+            all_elbo.append(elbo)
+            all_likelihood.append(like)
+            all_kl.append(kl)
+            all_kls.append(model.kl_divergences)
+    return torch.cat(all_elbo), torch.cat(all_likelihood), torch.cat(all_kl), concatenate_on_keys(all_kls)
+
+
+def encode_dataset(model, loader, device='cpu', **kwargs):
+    distributions
+    latents = []
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device, non_blocking=False)
+            lat = model.encode(x.view(x.shape[0], *model.in_shape), **kwargs)
+            latents.append(lat)
+    return concatenate_on_keys(latents)

@@ -1,5 +1,3 @@
-import inspect
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +8,6 @@ from torch.autograd import Variable
 from vari.distributions import ContinuousBernoulli
 from vari.layers.convenience import AddConstant, Clamp, Identity
 from vari.utilities import get_device
-from vari.inference.distributions import log_gaussian, log_bernoulli
 
 
 class LearnableDistribution(nn.Module):

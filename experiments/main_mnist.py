@@ -50,7 +50,7 @@ def default_configuration():
     model_type = 'conv'
     if True:  #model_type == 'dense':
         build_kwargs = dict(
-            x_dim=784,
+            x_dim=3*32*32,  #784,
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
             activation=torch.nn.LeakyReLU(),
@@ -140,7 +140,7 @@ def default_configuration():
     else:
         raise ValueError(f'Unknown model_type {model_type}')
     
-
+    num_cpu_workers = 2
     test_importance_samples = set([1, importance_samples, 100])
     device = get_device()
     seed = 0
@@ -157,12 +157,12 @@ def default_configuration():
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
-        warmup_epochs, free_nats, test_importance_samples, seed):
+        warmup_epochs, free_nats, test_importance_samples, num_cpu_workers, seed):
 
     # Print config, set threads and seed
     pprint(ex.current_run.config)
     if device == 'cpu':
-        torch.set_num_threads(2)
+        torch.set_num_threads(num_cpu_workers)
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -171,8 +171,8 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
     train_dataset = dataset(split='train', **dataset_kwargs)
     test_dataset = dataset(split='test', **dataset_kwargs)
     print(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=device=='cuda')
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=device=='cuda')
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=num_cpu_workers, pin_memory=device.type=='cuda')
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=True, num_workers=num_cpu_workers, pin_memory=device.type=='cuda')
 
     model, model_kwargs = build_dense_vae(**build_kwargs)
     torch.save(model_kwargs, f'{ex.models_dir()}/model_kwargs.pkl')
@@ -183,7 +183,7 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     deterministic_warmup = DeterministicWarmup(n=warmup_epochs)
-    free_nats_cooldown = FreeNatsCooldown(constant_epochs=int(warmup_epochs * 3), cooldown_epochs=warmup_epochs,
+    free_nats_cooldown = FreeNatsCooldown(constant_epochs=int(warmup_epochs * 3), cooldown_epochs=200,
                                           start_val=free_nats, end_val=None)
 
     epoch = 0
@@ -199,13 +199,10 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
             beta = next(deterministic_warmup)
             free_nats = next(free_nats_cooldown)
             for b, (x, _) in enumerate(train_loader):
-                x = x.to(device)
+                x = x.to(device, non_blocking=True)
 
                 optimizer.zero_grad()
 
-                # elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta)
-                # try:
-                #     with torch.autograd.detect_anomaly():
                 x = x.view(x.shape[0], *model.in_shape)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
                                                                 free_nats=free_nats, reduce_importance_samples=False)
@@ -224,10 +221,6 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
 
                 loss.backward()
                 optimizer.step()
-                #         print(i_update, elbo.mean().item())
-                # except RuntimeError:
-                #     import IPython
-                #     IPython.embed()
 
                 total_elbo += elbo.mean().item()
                 total_likelihood += likelihood.mean().item()
@@ -283,7 +276,8 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
                 for iws in sorted(test_importance_samples):
                     total_elbo, total_kl, total_likelihood, total_kls = 0, 0, 0, defaultdict(lambda: 0)
                     # Dynamic batch size depending on the number of importance samples
-                    test_loader = DataLoader(test_dataset, batch_size=(batch_size * 3) // iws + 1, shuffle=True, num_workers=2, pin_memory=device=='cuda')
+                    test_loader = DataLoader(test_dataset, batch_size=(batch_size * 3) // iws + 1, shuffle=True,
+                                             num_workers=num_cpu_workers, pin_memory=device=='cuda')
                     for b, (x, _) in enumerate(test_loader):
                         x = x.to(device)
 

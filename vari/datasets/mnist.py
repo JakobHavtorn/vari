@@ -3,10 +3,12 @@
 MNISTBinarized and MNISTContinuous form the parent classes of the remaining datasets.
 """
 
+import inspect
 import os
 import urllib
 
 import numpy as np
+import torch
 
 import torchvision.datasets
 
@@ -19,7 +21,7 @@ def onehot_encode(array, max_label=None):
 
 
 class MNISTBinarized(Dataset):
-    """MNIST dataset including filtering and concationation of train and test sets.
+    """MNIST dataset including filtering and concatenation of train and test sets.
     
     Serves binarized values in {0, 1}.
     
@@ -49,7 +51,7 @@ class MNISTBinarized(Dataset):
         super().__init__()
         
         assert preprocess in ['dynamic', 'static', 'deterministic']
-        assert split in ['train', 'test', 'join']
+        assert split in ['train', 'test']
 
         self.split = split
         self.exclude_labels = [] if exclude_labels is None else exclude_labels
@@ -59,21 +61,23 @@ class MNISTBinarized(Dataset):
         self.root = root
 
         np.random.seed(seed)
-        data_train = self._data_source(root=root, train=True, transform=transform,
-                                       target_transform=target_transform, download=download)
-        data_test = self._data_source(root=root, train=False, transform=transform,
-                                      target_transform=target_transform, download=download)
-
-        if split != 'join':
-            if split == 'train':
-                self.examples = np.array(data_train.data)
-                self.labels = onehot_encode(np.array(data_train.targets))
-            else:
-                self.examples = np.array(data_test.data)
-                self.labels = onehot_encode(np.array(data_test.targets))
+        argspec = inspect.getargspec(self._data_source)
+        if 'train' in argspec.args:
+            train = (split == 'train')
+            dataset = self._data_source(root=root, train=train, transform=transform,
+                                        target_transform=target_transform, download=download)
         else:
-            self.examples = np.concatenate([data_train.data, data_test.data])
-            self.labels = onehot_encode(np.concatenate([data_train.targets, data_test.targets]))
+            dataset = self._data_source(root=root, split=split, transform=transform,
+                                           target_transform=target_transform, download=download)
+
+        if isinstance(dataset.data, np.ndarray):
+            self.examples_max_val = np.iinfo(dataset.data[0].dtype).max
+        else:
+            self.examples_max_val = torch.iinfo(dataset.data[0].dtype).max
+
+        target_attr = 'targets' if hasattr(dataset, 'targets') else 'labels'
+        self.labels = onehot_encode(np.array(getattr(dataset, target_attr)))
+        self.examples = np.array(dataset.data)
 
         if preprocess in ['static', 'deterministic']:
             self.examples = self.warp(self.scale(self.examples))
@@ -101,7 +105,7 @@ class MNISTBinarized(Dataset):
         This results in values in [0, 1].
         """
         examples = examples.astype(np.float64)
-        examples /= 255  # /= examples.max()
+        examples /= self.examples_max_val
         return examples
 
     def warp(self, examples):
@@ -122,7 +126,7 @@ class MNISTBinarized(Dataset):
 
 
 class FashionMNISTBinarized(MNISTBinarized):
-    """FashionMNIST dataset including filtering and concationation of train and test sets.
+    """FashionMNIST dataset including filtering and concatenation of train and test sets.
     See MNISTBinarized.
     """
     _data_source = torchvision.datasets.FashionMNIST
@@ -135,7 +139,7 @@ class FashionMNISTBinarized(MNISTBinarized):
 
 
 class MNISTContinuous(MNISTBinarized):
-    """MNIST dataset including filtering and concationation of train and test sets.
+    """MNIST dataset including filtering and concatenation of train and test sets.
     
     Serves real values in [0, 1].
     
@@ -179,10 +183,10 @@ class MNISTContinuous(MNISTBinarized):
         if self.preprocess != 'deterministic':
             noise_matrix = self.random_generator.random(size=examples.shape, dtype=np.float32)  # np.random.rand(*examples.shape)
             examples += noise_matrix
-            examples /= 256
+            examples /= self.examples_max_val + 1
             np.clip(examples, 10*self._float_32_resolution, 1 - 10*self._float_32_resolution, out=examples)
         else:
-            examples /= 255
+            examples /= self.examples_max_val
         return examples
 
     def warp(self, examples):
@@ -209,7 +213,7 @@ class MNISTContinuous(MNISTBinarized):
     
 
 class FashionMNISTContinuous(MNISTContinuous):
-    """FashionMNIST dataset including filtering and concationation of train and test sets. 
+    """FashionMNIST dataset including filtering and concatenation of train and test sets. 
     See MNISTContinuous.
     """
     _data_source = torchvision.datasets.FashionMNIST
@@ -221,7 +225,7 @@ class FashionMNISTContinuous(MNISTContinuous):
 
 
 class CIFAR10Continuous(MNISTContinuous):
-    """FashionMNIST dataset including filtering and concationation of train and test sets. 
+    """FashionMNIST dataset including filtering and concatenation of train and test sets. 
     See MNISTContinuous.
     """
     _data_source = torchvision.datasets.CIFAR10

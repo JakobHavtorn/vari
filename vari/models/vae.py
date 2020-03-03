@@ -72,7 +72,6 @@ class DenseSequentialCoder(nn.Module):
 
     def initialize(self):
         gain = activation_gain(self.activation)
-
         for m in self.coder.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight, gain=gain)
@@ -367,18 +366,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         if free_nats is not None:
             self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(*px.batch_shape, *px.event_shape))
-        
-        # print(f'mean           {px.mean.mean().item():.2f} {px.mean.std().item():.2f}')
-        # print(f'variance       {px.variance.mean().item():.2f} {px.variance.std().item():.2f}')
-        # print(f'concentration0 {px.base_dist.concentration0.mean().item():.2f} {px.base_dist.concentration0.std().item():.2f}')
-        # print(f'concentration1 {px.base_dist.concentration1.mean().item():.2f} {px.base_dist.concentration1.std().item():.2f}')
-        # if torch.isinf(likelihood).any().item():
-        #     print(x.max())
-        #     import IPython
-        #     IPython.embed()
-        # likelihood[torch.isinf(likelihood)] = 1000
         elbo = likelihood - beta * self.kl_divergence
-
         if reduce_importance_samples:
             return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences, importance_samples)
         return elbo, likelihood, self.kl_divergence
