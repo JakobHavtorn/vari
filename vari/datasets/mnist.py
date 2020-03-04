@@ -85,7 +85,7 @@ class MNISTBinarized(Dataset):
         self.examples, self.labels = self.filter(self.examples, self.labels, exclude_labels)
 
     def __getitem__(self, idx):
-        example = self.examples[idx].astype(np.float32)
+        example = self.examples[idx]
         if self.preprocess == 'dynamic':
             example = self.warp(self.scale(example))
         return example.astype(np.float32), self.labels[idx].astype(np.float32)

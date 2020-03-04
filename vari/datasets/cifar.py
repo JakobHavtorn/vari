@@ -40,13 +40,13 @@ class SVHNContinuous(MNISTContinuous):
                  transform=None, target_transform=None, download=True):
         super().__init__(split=split, exclude_labels=exclude_labels, preprocess=preprocess, gamma=gamma, seed=seed,
                          root=root, transform=transform, target_transform=target_transform, download=download)
-
-    def __getitem__(self, idx):
-        example, label = super(SVHNContinuous, self).__getitem__(idx)
-        if example.ndim == 3:
-            example = example.transpose(1, 2, 0)
-        elif example.ndim == 4:
-            example = example.transpose(0, 2, 3, 1)
+        
+    def scale(self, examples):
+        # SVHN comes as [C, H, W] instead of [H, W, C] which is the convention we use so we tranpose
+        if examples.ndim == 3:  # Not batched
+            examples = examples.transpose(1, 2, 0)
+        elif examples.ndim == 4:  # Batched
+            examples = examples.transpose(0, 2, 3, 1)
         else:
             raise ValueError
-        return example, label
+        return super().scale(examples)
