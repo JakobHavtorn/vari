@@ -178,15 +178,18 @@ class MNISTContinuous(MNISTBinarized):
 
         Adds uniform [0, 1] noise to the integer pixel values between 0 and 255 and then divides by 256.
         This results in continuous values in [0, 1].
+        
+        We avoid exact zeros and ones because the beta distribution log-likelihood is infinite for almost all settings
+        of its parameters for such inputs.
         """
         examples = examples.astype(np.float32)
-        if self.preprocess != 'deterministic':
+        if self.preprocess == 'deterministic':
+            examples /= self.examples_max_val
+        else:
             noise_matrix = self.random_generator.random(size=examples.shape, dtype=np.float32)  # np.random.rand(*examples.shape)
             examples += noise_matrix
             examples /= self.examples_max_val + 1
             np.clip(examples, 10*self._float_32_resolution, 1 - 10*self._float_32_resolution, out=examples)
-        else:
-            examples /= self.examples_max_val
         return examples
 
     def warp(self, examples):
