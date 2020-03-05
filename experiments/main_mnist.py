@@ -18,6 +18,7 @@ import vari.datasets
 
 from vari.layers import GaussianLayer
 from vari.models import build_dense_vae, build_conv_vae, build_conv_dense_vae
+from vari.models.vae import get_copy_latents
 from vari.utilities import get_device, summary
 from vari.inference import DeterministicWarmup, FreeNatsCooldown
 
@@ -50,7 +51,7 @@ def default_configuration():
     model_type = 'conv'
     if True:  #model_type == 'dense':
         build_kwargs = dict(
-            x_dim=3*32*32,  #784,
+            x_dim=784, #3*32*32,  #784,
             z_dim=[5, 2],
             h_dim=[[512, 512], [256, 256]],
             activation=torch.nn.LeakyReLU(),
@@ -203,9 +204,13 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
 
                 optimizer.zero_grad()
 
+                # p = np.flip((np.array(range(model.n_layers)) + 1) / model.n_layers)
+                # copy_latents = get_copy_latents(model.n_layers, np.random.choice(range(model.n_layers), 1, p=p/p.sum()))
+
                 x = x.view(x.shape[0], *model.in_shape)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
                                                                 free_nats=free_nats, reduce_importance_samples=False)
+                                                                # copy_latents=copy_latents)
                 kl_divergences_1iw = {k: v[0] for k, v in model.kl_divergences.items()}
                 elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0], likelihood[0], kl_divergence[0]
                 kl_divergences = model.kl_divergences

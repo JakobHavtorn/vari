@@ -13,7 +13,10 @@ from vari.inference import log_gaussian, log_standard_gaussian
 from vari.inference.divergence import kld_gaussian_gaussian
 from vari.utilities import (get_device, log_sum_exp, compute_output_padding, compute_convolution_output_dimensions,
                             activation_gain, _pair)
-                          
+
+
+def get_copy_latents(n_layers, free_latents):
+    return dict((f'z{i+1}', True) if i >= free_latents else (f'z{i+1}', False) for i in range(n_layers))
 
 
 class DenseSequentialCoder(nn.Module):

@@ -5,24 +5,25 @@
 
 For reference and sanity checking, here are some estimates of the maximum attainable log-likelihood for some datasets.
 
-| Dataset                             | max log p(x) |
-| ----------------------------------- | ------------ |
-| Moons (σ=0.00)                      | >= 2.6       |
-| Moons (σ=0.01)                      | >= 1.2       |
-| Moons (σ=0.05)                      | >= -0.3      |
-| Spirals (σ=0.00)                    | >= 1.8       |
-|                                     |              |
-| MNIST (deterministic at 0.5)        |              |
-| MNIST (dynamic)                     |              |
-| MNIST (static)                      |              |
-|                                     |              |
-| FashionMNIST (deterministic at 0.5) |              |
-| FashionMNIST (dynamic)              |              |
-| FashionMNIST (static)               |              |
-|                                     |              |
-
-
-
+| Dataset                                      | max log p(x) |
+| -------------------------------------------- | ------------ |
+| Moons (σ=0.00)                               | > 2.6        |
+| Moons (σ=0.01)                               | > 1.2        |
+| Moons (σ=0.05)                               | > -0.3       |
+| Spirals (σ=0.00)                             | > 1.8        |
+|                                              |              |
+| MNISTBinarized (deterministic at 0.5)        |              |
+| MNISTBinarized (dynamic)                     | > -80        |
+| MNISTBinarized (static)                      |              |
+|                                              |              |
+| FashionMNISTBinarized (deterministic at 0.5) |              |
+| FashionMNISTBinarized (dynamic)              | > -90        |
+| FashionMNISTBinarized (static)               |              |
+|                                              |              |
+| FashionMNISTContinuous (dynamic)             | > 2500       |
+| FashionMNISTContinuous (static)              |              |
+| MNISTContinuous (dynamic)                    | > 3400       |
+| MNISTContinuous (static)                     |              |
 
 
 ## Improvement projects
@@ -40,6 +41,8 @@ For reference and sanity checking, here are some estimates of the maximum attain
 - Improve experiment setups with configuration files that can be read
 
 - Improve model building to allow more configuration
+
+- Refactor `get_copy_latents` and `copy_latents` argument to decode to be an integer of `free_latents` counted from the lowest to the highest latent.
 
 
 ## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)
