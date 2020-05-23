@@ -6,9 +6,11 @@ from collections import OrderedDict
 import numpy as np
 
 
-def summary(model, input_size, batch_size=-1, device="cuda"):
+def summary(model, input_size, batch_size=1, input_dtype=torch.FloatTensor, device=None):
 
     def register_hook(module):
+        # TODO Make this hooking aware of the depth within the model
+        #      Is this a top module or a module within a module etc. Display the depth in some way ()
 
         def hook(module, input, output):
             class_name = str(module.__class__).split(".")[-1].split("'")[0]
@@ -19,9 +21,7 @@ def summary(model, input_size, batch_size=-1, device="cuda"):
             summary[m_key]["input_shape"] = list(input[0].size())
             summary[m_key]["input_shape"][0] = batch_size
             if isinstance(output, (list, tuple)):
-                summary[m_key]["output_shape"] = [
-                    [-1] + list(o.size())[1:] for o in output
-                ]
+                summary[m_key]["output_shape"] = [[-1] + list(o.size())[1:] for o in output]
             elif isinstance(output, torch.distributions.Distribution):
                 summary[m_key]["output_shape"] = [batch_size]
                 summary[m_key]["output_shape"] += list(output.event_shape)
@@ -37,31 +37,17 @@ def summary(model, input_size, batch_size=-1, device="cuda"):
                 params += torch.prod(torch.LongTensor(list(module.bias.size())))
             summary[m_key]["nb_params"] = params
 
-        if (
-            not isinstance(module, nn.Sequential)
-            and not isinstance(module, nn.ModuleList)
-            and not (module == model)
-        ):
+        if not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model):
             hooks.append(module.register_forward_hook(hook))
-
-    device = device.lower()
-    assert device in [
-        "cuda",
-        "cpu",
-    ], "Input device is not valid, please specify 'cuda' or 'cpu'"
-
-    if device == "cuda" and torch.cuda.is_available():
-        dtype = torch.cuda.FloatTensor
-    else:
-        dtype = torch.FloatTensor
 
     # multiple inputs to the network
     if isinstance(input_size, tuple):
         input_size = [input_size]
 
     # batch_size of 2 for batchnorm
-    x = [torch.rand(2, *in_size).type(dtype) for in_size in input_size]
-    # print(type(x[0]))
+    if device is None:
+        device = next(model.parameters()).device  # Device of first parameters in model
+    x = [torch.rand(batch_size, *in_size).to(device) for in_size in input_size]
 
     # create properties
     summary = OrderedDict()
@@ -71,13 +57,13 @@ def summary(model, input_size, batch_size=-1, device="cuda"):
     model.apply(register_hook)
 
     # make a forward pass
-    # print(x.shape)
     model(*x)
 
     # remove these hooks
     for h in hooks:
         h.remove()
 
+    # TODO: Return and print this as a pandas dataframe
     print("----------------------------------------------------------------------------------------------")
     line_new = "{:>25}  {:>25} {:>25} {:>15}".format("Layer (type)", "Input Shape", "Output Shape", "Param #")
     print(line_new)
@@ -101,10 +87,11 @@ def summary(model, input_size, batch_size=-1, device="cuda"):
         print(line_new)
 
     # assume 4 bytes/number (float on cuda).
-    total_input_size = abs(np.prod(input_size) * batch_size * 4. / (1024 ** 2.))
-    total_output_size = abs(2. * total_output * 4. / (1024 ** 2.))  # x2 for gradients
-    total_params_size = abs(total_params.numpy() * 4. / (1024 ** 2.))
-    total_size = total_params_size + total_output_size + total_input_size
+    total_input_size = np.prod(input_size) * batch_size * 4. / 1e6
+    total_output_size = total_output * 4. / 1e6  # x2 for gradients
+    total_params_size = total_params.item() * 4. / 1e6
+    total_gradients_size = total_params.item() * 4. / 1e6
+    total_size = total_params_size + total_gradients_size + total_output_size + total_input_size
 
     print("==============================================================================================")
     print("Total params: {0:,}".format(total_params))
@@ -112,8 +99,9 @@ def summary(model, input_size, batch_size=-1, device="cuda"):
     print("Non-trainable params: {0:,}".format(total_params - trainable_params))
     print("----------------------------------------------------------------------------------------------")
     print("Input size (MB): %0.2f" % total_input_size)
-    print("Forward/backward pass size (MB): %0.2f" % total_output_size)
-    print("Params size (MB): %0.2f" % total_params_size)
+    print("Forward pass size (MB): %0.2f" % total_output_size)
+    print("Parameters size (MB): %0.2f" % total_params_size)
+    print("Gradients size (MB): %0.2f" % total_gradients_size)
     print("Estimated Total Size (MB): %0.2f" % total_size)
     print("----------------------------------------------------------------------------------------------")
     # return summary

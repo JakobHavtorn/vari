@@ -1,8 +1,6 @@
 from .spirals import Spirals
 from .moons import Moons
-from .mnist import MNISTReal, MNISTBinarized, MNISTBinarizedLarochelle, FashionMNISTReal, \
+from .mnist import MNISTContinuous, MNISTBinarized, MNISTBinarizedLarochelle, FashionMNISTContinuous, \
                    FashionMNISTBinarized
+from .cifar import CIFAR10Continuous, CIFAR100Continuous, SVHNContinuous
 from torchvision import datasets
-
-SVHN = datasets.SVHN
-CIFAR10 = datasets.CIFAR10

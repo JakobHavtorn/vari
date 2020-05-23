@@ -5,35 +5,46 @@
 
 For reference and sanity checking, here are some estimates of the maximum attainable log-likelihood for some datasets.
 
-| Dataset                             | max log p(x) |
-| ----------------------------------- | ------------ |
-| Moons (σ=0.00)                      | >= 2.6       |
-| Moons (σ=0.01)                      | >= 1.2       |
-| Moons (σ=0.05)                      | >= -0.3      |
-| Spirals (σ=0.00)                    | >= 1.8       |
-|                                     |              |
-| MNIST (deterministic at 0.5)        |              |
-| MNIST (dynamic)                     |              |
-| MNIST (static)                      |              |
-|                                     |              |
-| FashionMNIST (deterministic at 0.5) |              |
-| FashionMNIST (dynamic)              |              |
-| FashionMNIST (static)               |              |
-|                                     |              |
-
-
-
+| Dataset                                      | max log p(x) |
+| -------------------------------------------- | ------------ |
+| Moons (σ=0.00)                               | > 2.6        |
+| Moons (σ=0.01)                               | > 1.2        |
+| Moons (σ=0.05)                               | > -0.3       |
+| Spirals (σ=0.00)                             | > 1.8        |
+|                                              |              |
+| MNISTBinarized (deterministic at 0.5)        |              |
+| MNISTBinarized (dynamic)                     | > -80        |
+| MNISTBinarized (static)                      |              |
+|                                              |              |
+| FashionMNISTBinarized (deterministic at 0.5) |              |
+| FashionMNISTBinarized (dynamic)              | > -90        |
+| FashionMNISTBinarized (static)               |              |
+|                                              |              |
+| FashionMNISTContinuous (dynamic)             | > 2500       |
+| FashionMNISTContinuous (static)              |              |
+| MNISTContinuous (dynamic)                    | > 3400       |
+| MNISTContinuous (static)                     |              |
 
 
 ## Improvement projects
 
-- Improve generality of code in case of convolutional coders
+- Stochastic (distribution) layers should expect logits as input. I.e. if they have trainable transformations on the input
+  they should apply their own activations.
+
+- Make all stochastic (distribution) layers take in the dimensionality of the space (1, 2, ...). Currently only 1D is
+  supported but for image outputs it would be easier to have the output space be 2D for images.
+
+- Make importance weighting a wrapper around any model that wraps the `forward` call and first repeats the input iw times
 
 - Add evaluators to make logging on metrics easier and take up less code in experiment files
 
-- Add better stopping/saving criteria
-
 - Improve experiment setups with configuration files that can be read
+
+- Improve model building to allow more configuration
+
+- Refactor `get_copy_latents` and `copy_latents` argument to decode to be an integer of `free_latents` counted from the lowest to the highest latent.
+
+- LadderVAE at https://github.com/addtt/ladder-vae-pytorch is a useful reference
 
 
 ## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)

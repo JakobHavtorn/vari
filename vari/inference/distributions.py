@@ -3,11 +3,15 @@ import torch
 import torch.nn.functional as F
 
 
-# def asinh(x):
-#     return torch.log(x+(x**2+1)**0.5)
+# https://github.com/r9y9/wavenet_vocoder/blob/master/wavenet_vocoder/mixture.py
+# https://github.com/pclucas14/pixel-cnn-pp/blob/master/utils.py
 
-# def acosh(x):
-#     return torch.log(x+(x**2-1)**0.5)
+
+class DiscretizedLogisticMixture(torch.distributions.Distribution):
+    def __init__():
+        raise NotImplementedError
+
+
 
 def atanh(x):
     """Computes hyperbolic tangent for x in (-1, 1)

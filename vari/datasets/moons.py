@@ -12,8 +12,8 @@ def make_data_moons(n_samples=1000, shuffle=True, noise=.05, seed=0):
 
 
 class Moons(Dataset):
-    def __init__(self, n_samples=10000, noise=0.0, seed=0):
-        examples, labels = make_data_moons(n_samples=n_samples, noise=noise, seed=seed)
+    def __init__(self, n_samples=10000, shuffle=True, noise=0.0, seed=0):
+        examples, labels = make_data_moons(n_samples=n_samples, shuffle=shuffle, noise=noise, seed=seed)
         self.n_samples = n_samples
         self.noise = noise
         self.seed = seed

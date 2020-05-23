@@ -1,3 +1,5 @@
+import copy
+
 from collections import OrderedDict
 
 import numpy as np
@@ -5,29 +7,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vari.layers import Identity, GaussianLayer, BernoulliLayer, GaussianMerge, GumbelSoftmax
+from vari.layers import (Identity, GaussianLayer, BernoulliLayer, GaussianMerge, GumbelSoftmax,
+                         Flatten, View, GlobalMaxPool2d)
 from vari.inference import log_gaussian, log_standard_gaussian
-from vari.inference.divergence import kld_gaussian_gaussian, kld_gaussian_gaussian_analytical
-from vari.utilities import get_device, log_sum_exp
+from vari.inference.divergence import kld_gaussian_gaussian
+from vari.utilities import (get_device, log_sum_exp, compute_output_padding, compute_convolution_output_dimensions,
+                            activation_gain, _pair)
 
 
-class MultiLayeredPerceptron(nn.Module):
-    def __init__(self, dims, activation_fn=F.relu, output_activation=None):
-        super().__init__()
-        self.dims = dims
-        self.activation_fn = activation_fn
-        self.output_activation = output_activation
-
-        self.layers = nn.ModuleList(list(map(lambda d: nn.Linear(*d), list(zip(dims, dims[1:])))))
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i == len(self.layers)-1 and self.output_activation is not None:
-                x = self.output_activation(x)
-            else:
-                x = self.activation_fn(x)
-        return x
+def get_copy_latents(n_layers, free_latents):
+    return dict((f'z{i+1}', True) if i >= free_latents else (f'z{i+1}', False) for i in range(n_layers))
 
 
 class DenseSequentialCoder(nn.Module):
@@ -44,43 +33,50 @@ class DenseSequentialCoder(nn.Module):
 
     Arguments:
         x_dim (int): Dimensionality of the inputs to be expected e.g. 784
-        z_dim (int); Dimensionality of the latent space (regularized to conform to the prior of the `distribution`)
         h_dim (list of int): Dimensionality of the intermediate hidden affine nonlinear transformations.
         activation (nn.Activation): The activation function to apply between affine layers.
         distribution (vari.layers): The model that parameterizes the distribution of the latent space.
+                                    Must take [*, h_dim[-1]] tensor as input and give [*, z_dim] tensor as output.
     """
-    def __init__(self, x_dim, z_dim, h_dim, activation=nn.Tanh, distribution=GaussianLayer):
+    def __init__(self, x_dim, h_dim, distribution, activation=nn.LeakyReLU(), batchnorm=False):
         super().__init__()
-        assert isinstance(x_dim, int) and isinstance(z_dim, int) and isinstance(h_dim, list)
+        assert isinstance(x_dim, int) and isinstance(h_dim, list)
         self.x_dim = x_dim
-        self.z_dim = z_dim
         self.h_dim = h_dim
-        self._activation = activation
-        self._distribution = distribution
+        self.activation = activation
+        self.batchnorm = batchnorm
 
+        self.coder = self.build_coder(x_dim, h_dim, activation, batchnorm)
+        self.distribution = distribution
+        self.initialize()
+        
+    @property
+    def in_shape(self):
+        return (self.x_dim,)
+
+    @staticmethod
+    def build_coder(x_dim, h_dim, activation, batchnorm):
         modules = []
-        dims = [x_dim, *self.h_dim]
+        dims = [x_dim, *h_dim]
+        if batchnorm:
+            modules.append(nn.BatchNorm1d(dims[0]))
         for i in range(1, len(dims)):
             modules.append(nn.Linear(dims[i-1], dims[i]))
+            if batchnorm:
+                modules.append(nn.BatchNorm1d(dims[i])) 
             if activation is not None:
-                modules.append(activation())
-        self.coder = nn.Sequential(*modules)
-        self.distribution = distribution(self.h_dim[-1], z_dim)
-        self.initialize()
+                modules.append(copy.deepcopy(activation))
+        return nn.Sequential(*modules)
+    
+    def get_inverted_kwargs(self):
+        x_dim = self.h_dim[-1]
+        h_dim = [*self.h_dim[::-1][1:]]
+        return dict(x_dim=x_dim, h_dim=h_dim, activation=self.activation)
 
     def initialize(self):
-        if self._activation is None:
-            gain = 1
-        elif isinstance(self._activation(), nn.LeakyReLU) or isinstance(self._activation(), nn.ELU):
-            gain = nn.init.calculate_gain('leaky_relu', param=None)
-        else:
-            name = self._activation().__class__.__name__.lower()
-            gain = nn.init.calculate_gain(name, param=None)
-        i = 0
+        gain = activation_gain(self.activation)
         for m in self.coder.modules():
             if isinstance(m, nn.Linear):
-                print(i, m)
-                i += 1
                 nn.init.xavier_normal_(m.weight, gain=gain)
                 if m.bias is not None:
                     m.bias.data.zero_()
@@ -98,6 +94,145 @@ class DenseSequentialCoder(nn.Module):
         return self.distribution(h)
 
 
+class Conv2dSequentialCoder(nn.Module):
+    """
+    Coder network that can parameterize a distribution, variational or not.
+    
+    If used as "inference network", attempts to infer the probability distribution p_true(z|x) from the data by fitting a
+    variational distribution q(z|x). 
+    
+    If used as generative network, attempts to infer the probability distribution p_true(x|z) from the data by fitting a 
+    distribution p(x|z).
+    
+    Returns the distribution (with batch dimension) that encodes a batch of examples (x or z).
+
+    Arguments:
+        in_shape (tuple): Shape of the input excluding the batch dimension, e.g. (1, 28, 28)
+        h_dim (dict of list): filters, kernels and strides (optional) of the convolutions.
+        activation (nn.Activation): The activation function to apply between affine layers.
+        distribution (vari.layers): The model that parameterizes the distribution of the latent space.
+                                    Must take [*, h_dim[-1]] tensor as input and give [*, z_dim] tensor as output.
+    """
+    def __init__(self, in_shape, filters, kernels, distribution, strides=None, padding=None, activation=nn.LeakyReLU(),
+                 linear_out=None, transposed=False, reduction=None):
+        super().__init__()
+
+        if strides is None:
+            strides = [1] * len(filters)
+        if padding is None:
+            padding = [0] * len(filters)
+
+        assert len(filters) == len(kernels) == len(strides) == len(padding)
+
+        self.in_shape = in_shape
+        self.filters = filters
+        self.kernels = [_pair(k) for k in kernels]
+        self.strides = [_pair(s) for s in strides]
+        self.padding = [_pair(p) for p in padding]
+        self.linear_out = linear_out
+        self.activation = activation
+        self.transposed = transposed
+        self.reduction = reduction
+
+        self.coder = self.build_coder(self.in_shape, self.filters, self.kernels, self.strides, self.padding,
+                                      self.activation, self.linear_out, self.transposed, self.reduction)
+        self.distribution = distribution
+        self.initialize()
+        
+    @staticmethod
+    def build_coder(in_shape, filters, kernels, strides, padding, activation, linear_out, transposed, reduction):
+        # Forward pass through the regular convolution to compute output regular dimensions
+        in_channels = in_shape[0]
+        channels = [in_channels, *filters]
+        if reduction == 'flatten':
+            outs = [in_shape[-2:]]
+            for i in range(len(channels) - 1):
+                out = compute_convolution_output_dimensions(outs[-1], kernels[i], strides[i], padding[i], transposed=False)
+                outs.append(out)
+            linear_in_shape = channels[-1] * np.prod(out)
+        elif reduction == 'max_pool':
+            linear_in_shape = channels[-1]
+
+        # If using transposed convolutions, then the first layer is dense from in to convolutional dimensions
+        modules = []
+        if transposed and linear_out is not None:
+            modules.append(nn.Linear(linear_out, linear_in_shape))
+            if reduction == 'flatten':
+                assert linear_in_shape % np.prod(out) == 0
+                modules.append(View(shape=(linear_in_shape // np.prod(out), *out)))
+            elif reduction == 'max_pool':
+                modules.append(View(shape=(linear_in_shape, 1, 1)))
+            modules.append(copy.deepcopy(activation))
+
+        if transposed:
+            channels = list(reversed(channels))
+            kernels = list(reversed(kernels))
+            strides = list(reversed(strides))
+            padding = list(reversed(padding))
+            outs = list(reversed(outs))
+        conv = nn.ConvTranspose2d if transposed else nn.Conv2d
+        for i in range(len(channels) - 1):
+            kwargs = dict(in_channels=channels[i],
+                          out_channels=channels[i + 1],
+                          kernel_size=kernels[i],
+                          stride=strides[i],
+                          padding=padding[i],
+                          dilation=1,
+                          bias=True)
+            if transposed:
+                # This selects between the #strides different cases that lead to the same input size
+                print(outs[i+1])
+                # TODO I am a bit in doubt whether this should be outs[i+1] outs[i] leaning to the latter but the forming working on MNIST
+                kwargs['output_padding'] = compute_output_padding(outs[i+1], kernels[i], strides[i], padding[i])
+
+            modules.append(conv(**kwargs))
+
+            if activation is not None and (not transposed or i < len(channels) - 2):
+                # No output activation for transposed convolution... TODO We need a convention here
+                modules.append(copy.deepcopy(activation))
+
+        if not transposed:
+            if reduction == 'max_pool':
+                modules.append(GlobalMaxPool2d())
+            elif reduction == 'flatten':
+                modules.append(Flatten())
+
+            if linear_out is not None:
+                modules.append(nn.Linear(linear_in_shape, linear_out))
+                modules.append(copy.deepcopy(activation))
+
+        return nn.Sequential(*modules)
+    
+    def get_inverted_kwargs(self):
+        raise NotImplementedError
+        in_features = self.filters[-1]
+        filters = [*list(reversed(self.filters)), self.in_channels]
+        kernels = list(reversed(self.kernels))
+        return dict(in_channels=in_features, filters=filters, kernels=self.kernels, strides=self.strides,
+                    activation=self.activation, transposed=(not self.transposed))
+
+    def initialize(self):
+        gain = activation_gain(self.activation)
+        for m in self.coder.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_normal_(m.weight, gain=gain)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+                    
+    def forward(self, x):
+        """Forward pass an example through the model
+        
+        Args:
+            x (tensor): Tensor of shape [B, C, H, W] where B is a number of batch dimensions.
+        
+        Returns:
+            tensor: Tensor of shape [B, C_out] if reduction=='max_pool', [B, C_out * H_out * W_out] if 
+                    reduction=='flatten' or [B, C_out, H_out, W_out] if reduction is None.
+        """
+        h = self.coder(x)  # [B, C_out, H_out, W_out]
+        return self.distribution(h)
+
+
 class VariationalAutoencoder(nn.Module):
     """
     Variational Autoencoder [Kingma 2013] model
@@ -111,12 +246,17 @@ class VariationalAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.kl_divergences = OrderedDict([('z', 0)])
+        
+    @property
+    def in_shape(self):
+        return self.encoder.in_shape
 
     @property
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, reduce_importance_samples=True, analytical_kl=False):
+    def elbo(self, x, importance_samples=1, beta=1, analytical_kl=False, free_nats=None,
+             reduce_importance_samples=True,):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -125,23 +265,25 @@ class VariationalAutoencoder(nn.Module):
             importance_samples (int, optional): Number of importance samples to use. Defaults to None.
             beta (int, optional): Value of ß for the ß-VAE or deterministic warmup parameter. Defaults to 1.
             analytical_kl (bool, optional): Whether to compute KL divergence between q(z|x) and p(z) analytically.
+            free_nats (bool, optional): How many nats to consider free in the KL terms.
             reduce_importance_samples (bool, optional): Whether to return elbo, likelihood and KL reduced over samples.
 
         Returns:
             [type]: [description]
         """
         px = self.forward(x, importance_samples=importance_samples, analytical_kl=analytical_kl)
+        if free_nats is not None:
+            self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
         likelihood = px.log_prob(x.view(-1, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
+        kl_divergence = self.kl_divergence
 
         if reduce_importance_samples:
-            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
-        return elbo, likelihood, self.kl_divergence
+            elbo, likelihood, kl_divergence = self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
+        return elbo, likelihood, kl_divergence.clamp_(min=free_nats)
 
     def reduce_importance_samples(self, elbo, likelihood, kl_divergences):
         self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
-        # return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
-        # self.kl_divergences = OrderedDict([(k, log_sum_exp(kl, axis=0, sum_op=torch.mean).flatten()) for k, kl in self.kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
 
     def encode(self, x, importance_samples=1):
@@ -166,9 +308,9 @@ class VariationalAutoencoder(nn.Module):
         z, qz = latent['z']['sample'], latent['z']['distribution']
         px = self.decode(z)  # Generative p(x|z)
         if analytical_kl:
-            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.get_prior())[None, ...]
+            self.kl_divergences['z'] = torch.distributions.kl_divergence(qz, self.encoder.distribution.prior)[None, ...]
         else:
-            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.get_prior().log_prob(z)
+            self.kl_divergences['z'] = qz.log_prob(z) - self.encoder.distribution.prior.log_prob(z)
         return px
 
     def generate(self, n_samples=None, z=None, seed=None):
@@ -181,7 +323,7 @@ class VariationalAutoencoder(nn.Module):
             torch.manual_seed(seed)
         if z is not None:
             return self.decode(z)
-        z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
+        z = self.encoder.distribution.prior.sample(torch.Size([n_samples]))
         return self.decode(z)
 
 
@@ -193,18 +335,23 @@ class HierarchicalVariationalAutoencoder(nn.Module):
     encoder. Also known as the M1 model in [Kingma 2014].
     :param dims: x, z and hidden dimensions of the networks
     """
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, skip_connections=None):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.n_layers = len(encoder)
         self.kl_divergences = OrderedDict([(f'z{i+1}', 0) for i in range(0, self.n_layers)])
+        self.skip_connections = skip_connections
+        
+    @property
+    def in_shape(self):
+        return self.encoder[0].in_shape
 
     @property
     def kl_divergence(self):
         return sum(self.kl_divergences.values())
 
-    def elbo(self, x, importance_samples=1, beta=1, reduce_importance_samples=True, copy_latents=None):
+    def elbo(self, x, importance_samples=1, beta=1, free_nats=None, reduce_importance_samples=True, copy_latents=None):
         """Computes a complete forward pass and then computes the log-likelihood log p(x|z) and the ELBO log p(x)
         and returns the ELBO, log-likelihood and the total KL divergence.
 
@@ -212,31 +359,57 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             x (tensor): Inputs of shape [N, *, D] where N is batch and D is input dimension (potentially more than one)
             importance_samples ([type], optional): [description]. Defaults to None.
             beta (int, optional): [description]. Defaults to 1.
+            free_nats (bool, optional): How many nats to consider free in the KL terms.
 
         Returns:
-            [type]: [description]
+            tuple: ELBO log p(x), likelihood log p(x|z) and KL divergence per latent variable
         """
-        px = self.forward(x, importance_samples=importance_samples, copy_latents=copy_latents)
-        likelihood = px.log_prob(x.view(-1, *px.event_shape))
+        x = x.repeat(importance_samples, *(1,) * (x.ndim - 1))  # Importance sampling [B * IS, D1, D2, ...]
+        px = self.forward(x, copy_latents=copy_latents)
+        if free_nats is not None:
+            self.kl_divergences = OrderedDict([(k, kl.clamp_(min=free_nats)) for k, kl in self.kl_divergences.items()])
+        likelihood = px.log_prob(x.view(*px.batch_shape, *px.event_shape))
         elbo = likelihood - beta * self.kl_divergence
-
         if reduce_importance_samples:
-            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences)
+            return self.reduce_importance_samples(elbo, likelihood, self.kl_divergences, importance_samples)
         return elbo, likelihood, self.kl_divergence
 
-    def reduce_importance_samples(self, elbo, likelihood, kl_divergences):
-        self.kl_divergences = OrderedDict([(k, kl.mean(axis=0)) for k, kl in kl_divergences.items()])
+    def reduce_importance_samples(self, elbo, likelihood, kl_divergences, importance_samples):
+        elbo, likelihood = elbo.view(importance_samples, -1), likelihood.view(importance_samples, -1)
+        self.kl_divergences = OrderedDict([(k, kl.view(importance_samples, -1).mean(axis=0)) for k, kl in kl_divergences.items()])
         return log_sum_exp(elbo, axis=0, sum_op=torch.mean).flatten(), likelihood.mean(axis=0), self.kl_divergence
 
-    def encode(self, x, importance_samples=1):
-        """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x)
+    def encode(self, x):
+        """Return list of latents with an element being a tuple of samples and a tuple of the parameters of the q(z|x).
+        
+        Skip connections:   x ––> h1 ––> z1 ––> h2 ––> z2 ––> h3 ––> z3 ––> h4 ––> z4
+                                  |–––––––––––> + ––––––––––> + ––––––––––> +
+                            h1 = f1(x)
+                            z1 = g1(h1)
+                            h2 = f2(z1) + linear_map(h1)
+                            z2 = g2(h2)
+                            h3 = f2(z2) + linear_map(h2)
+                            ...
         """
         latents = OrderedDict()
-        z = x
-        for i, encoder in enumerate(self.encoder, start=1):
-            qz = encoder(z)
-            z = qz.rsample(torch.Size([importance_samples])) if i==1 else qz.rsample()
-            latents[f'z{i}'] = (z, qz)
+        if self.skip_connections:
+            h = self.encoder[0].coder(x)
+            qz = self.encoder[0].distribution(h)
+            z = qz.rsample()
+            latents[f'z1'] = (z, qz)
+            for i, (encoder, skip_connection) in enumerate(zip(self.encoder[1:], self.skip_connections), start=2):
+                h_skip = skip_connection(h)
+                h = encoder.coder(z)
+                h = h + h_skip
+                qz = encoder.distribution(h)
+                z = qz.rsample()
+                latents[f'z{i}'] = (z, qz)
+        else:
+            z = x
+            for i, encoder in enumerate(self.encoder, start=1):
+                qz = encoder(z)
+                z = qz.rsample()
+                latents[f'z{i}'] = (z, qz)
         return latents
 
     def decode(self, latents, copy_latents=None):
@@ -261,14 +434,14 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             qz_samples, qz = latents[z_key]
             if z_index == self.n_layers:  # At top we use prior for KL
                 self.kl_divergences[z_key] = qz.log_prob(qz_samples) - \
-                                                        self.encoder[-1].distribution.get_prior().log_prob(qz_samples)
+                                                        self.encoder[-1].distribution.prior.log_prob(qz_samples)
             else:
                 self.kl_divergences[z_key] = qz.log_prob(qz_samples) - pz.log_prob(qz_samples)
             if copy_latents is None or copy_latents[z_key]:  # Copy latents from layer below for decoding (and KL)
                 pz = self.decoder[-z_index](qz_samples)  # p(z_{i-1}|z_{i}) where z_{i} ~  q(z_{i}|z_{i-1}) or q(z_1|x)
             else:
                 if z_index == self.n_layers:
-                    pz = self.encoder[-1].distribution.get_prior()
+                    pz = self.encoder[-1].distribution.prior
                     pz_samples = pz.rsample(qz.batch_shape)
                 else:
                     pz_samples = pz.rsample()
@@ -276,7 +449,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
 
         return pz  # Final pz is actually p(x|z)
 
-    def forward(self, x, importance_samples=1, copy_latents=None):
+    def forward(self, x, copy_latents=None):
         """
         Runs a data point through the model in order
         to provide its reconstruction and q distribution
@@ -284,7 +457,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         :param x: input data
         :return: reconstructed input
         """
-        qz = self.encode(x, importance_samples=importance_samples)  # Latent inference q(z|x)
+        qz = self.encode(x)  # Latent inference q(z|x)
         px = self.decode(qz, copy_latents=copy_latents)  # Generative p(x|z)
         return px
 
@@ -293,6 +466,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
         Generate samples from the generative model by either sampling `n_samples` from the prior p(z) or by decoding
         the given latent representation `z`. In both cases, setting `seed` can make decoding reproducible.
         """
+        assert (n_samples is not None) != (z is not None), 'Specify either n_samples or z.'
         def decode(z):
             for decoder in self.decoder:
                 pz = decoder(z)
@@ -302,7 +476,7 @@ class HierarchicalVariationalAutoencoder(nn.Module):
             torch.manual_seed(seed)
         if z is not None:
             return decode(z)
-        z = self.encoder.distribution.get_prior().sample(torch.Size([n_samples]))
+        z = self.encoder[-1].distribution.prior.sample(torch.Size([n_samples]))
         return decode(z)
 
 
