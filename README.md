@@ -44,6 +44,8 @@ For reference and sanity checking, here are some estimates of the maximum attain
 
 - Refactor `get_copy_latents` and `copy_latents` argument to decode to be an integer of `free_latents` counted from the lowest to the highest latent.
 
+- LadderVAE at https://github.com/addtt/ladder-vae-pytorch is a useful reference
+
 
 ## Implement analytical KL divergence for Independent distributions (Diagonal Gaussian)
 Diagonal Gaussian KL divergences are not implemented in PyTorch ATM. This can be easily achieved by:

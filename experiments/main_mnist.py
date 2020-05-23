@@ -1,9 +1,10 @@
-import numpy as np
-import logging
-import pickle
+import datetime
 
 from collections import defaultdict
 
+import numpy as np
+import logging
+import pickle
 import torch
 
 from tqdm import tqdm
@@ -11,11 +12,10 @@ from torch.utils.data import DataLoader
 from pprint import pprint
 from sacred import SETTINGS
 
-from model_utils.experiment import Experiment
-
 import vari.models.vae
 import vari.datasets
 
+from model_utils.experiment import Experiment
 from vari.layers import GaussianLayer
 from vari.models import build_dense_vae, build_conv_vae, build_conv_dense_vae
 from vari.models.vae import get_copy_latents
@@ -25,7 +25,7 @@ from vari.inference import DeterministicWarmup, FreeNatsCooldown
 import IPython
 
 
-SETTINGS.CONFIG.READ_ONLY_CONFIG = False
+SETTINGS.CONFIG.READ_ONLY_CONFIG = False  # Allow modifications to variables defined in config
 LOGGER = logging.getLogger()
 ex = Experiment(name='OOD VAE')
 
@@ -33,8 +33,7 @@ ex = Experiment(name='OOD VAE')
 @ex.config
 def default_configuration():
     tag = 'ood-detection'
-    extra_tag = '24.02.2020'
-
+    
     dataset_name = 'MNISTBinarized'
     dataset_kwargs = dict(
         preprocess='dynamic',
@@ -43,10 +42,13 @@ def default_configuration():
 
     n_epochs = 1000
     batch_size = 256
-    importance_samples = 10
+    importance_samples = 1
     learning_rate = 3e-4
     warmup_epochs = 0
     free_nats = None
+    
+    max_epochs_without_improvement = 500
+    epoch_checkpoint_interval = 50
     
     model_type = 'conv'
     if True:  #model_type == 'dense':
@@ -154,11 +156,26 @@ def default_configuration():
         build_kwargs['decoder_distribution'].append('BetaLayer')
     elif 'Binarized' in dataset_name:
         build_kwargs['decoder_distribution'].append('BernoulliLayer')
+        
+    tag_day = datetime.datetime.now().day
+    tag_month = datetime.datetime.now().month
+    tag_year = datetime.datetime.now().year
+
+
+def loss_is_naninf(loss):
+    if torch.isnan(loss).any() or torch.isinf(loss).any():
+        if torch.isnan(loss).any():
+            ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was NaN! (skipped)')
+        else:
+            ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was Inf! (skipped)')
+        return True
+    return False
 
 
 @ex.automain
 def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size, learning_rate, importance_samples,
-        warmup_epochs, free_nats, test_importance_samples, num_cpu_workers, seed):
+        warmup_epochs, free_nats, max_epochs_without_improvement, epoch_checkpoint_interval, test_importance_samples,
+        num_cpu_workers, seed):
 
     # Print config, set threads and seed
     pprint(ex.current_run.config)
@@ -189,6 +206,7 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
 
     epoch = 0
     i_update = 0
+    epoch_last_checkpoint = 0
     best_elbo = -1e10
     pz_samples = model.encoder[-1].distribution.prior.sample(torch.Size([1000]))
 
@@ -204,24 +222,16 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
 
                 optimizer.zero_grad()
 
-                # p = np.flip((np.array(range(model.n_layers)) + 1) / model.n_layers)
-                # copy_latents = get_copy_latents(model.n_layers, np.random.choice(range(model.n_layers), 1, p=p/p.sum()))
-
                 x = x.view(x.shape[0], *model.in_shape)
                 elbo, likelihood, kl_divergence = model.elbo(x, importance_samples=importance_samples, beta=beta,
                                                                 free_nats=free_nats, reduce_importance_samples=False)
-                                                                # copy_latents=copy_latents)
                 kl_divergences_1iw = {k: v[0] for k, v in model.kl_divergences.items()}
                 elbo_1iw, likelihood_1iw, kl_divergence_1iw = elbo[0], likelihood[0], kl_divergence[0]
                 kl_divergences = model.kl_divergences
                 elbo, likelihood, kl_divergence = model.reduce_importance_samples(elbo, likelihood, kl_divergences, importance_samples)
 
                 loss = - torch.mean(elbo)
-                if torch.isnan(loss).any() or torch.isinf(loss).any():
-                    if torch.isnan(loss).any():
-                        ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was NaN! (skipped)')
-                    else:
-                        ex.logger.warning(f'Epoch {epoch:3d} | Batch {b:3d} | The loss was Inf! (skipped)')
+                if loss_is_naninf(loss):
                     continue
 
                 loss.backward()
@@ -275,7 +285,7 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
                     s += f' | KL {k} {v / len(train_loader):2.4f}'
             print(s)
 
-            if epoch % 50 == 0:
+            if epoch % epoch_checkpoint_interval == 0:
                 # Evaluate model
                 model.eval()
                 for iws in sorted(test_importance_samples):
@@ -332,7 +342,11 @@ def run(device, dataset_name, dataset_kwargs, build_kwargs, n_epochs, batch_size
                     best_likelihood = total_likelihood
                     torch.save(model.state_dict(), f'{ex.models_dir()}/model_state_dict.pkl')
                     print(f'Epoch {epoch:3d} | Saved model at ELBO {total_elbo: 2.4f}')
-                    
+                    epoch_last_checkpoint = epoch
+
+                if epoch - epoch_last_checkpoint >= max_epochs_without_improvement and deterministic_warmup.is_done:
+                    break  # End training loop
+
             epoch += 1
 
     except KeyboardInterrupt:

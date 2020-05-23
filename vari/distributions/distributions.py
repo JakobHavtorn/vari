@@ -1,5 +1,3 @@
-import math
-
 from numbers import Number
 
 import torch
@@ -8,7 +6,6 @@ from torch.distributions import constraints
 from torch.distributions.exp_family import ExponentialFamily
 from torch.distributions.utils import broadcast_all, probs_to_logits, logits_to_probs, lazy_property
 from torch.nn.functional import binary_cross_entropy_with_logits
-
 
 
 class ContinuousBernoulli(ExponentialFamily):

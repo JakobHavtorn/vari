@@ -11,9 +11,12 @@ from vari.utilities import get_device
 
 
 class LearnableDistribution(nn.Module):
+    def __init__(self):
+        pass
+
     def initialize(self):
         raise NotImplementedError
-    
+
     @property
     def default_prior(self):
         raise NotImplementedError
@@ -21,16 +24,16 @@ class LearnableDistribution(nn.Module):
 
 class GaussianLayer(LearnableDistribution):
     r"""Layer that parameterizes a diagonal covariance Gaussian distribution by its mean and standard deviation vectors.
-    
+
     The distribution is continuous and support [-inf, inf].
-    
+
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
     standard deviation.
-    
+
     The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
     The standard deviation is parameterized by a linear transformation of the input followed by a softplus activation
     scaling it to [0, inf] and then an AddConstant and/or Clamping to fix it in the range [min_sd, max_sd].
-    
+
     TODO Rename scale to sd
     """
     def __init__(self, in_features, out_features, min_sd=1e-8, max_sd=10, prior=None):
@@ -78,27 +81,27 @@ class GaussianLayer(LearnableDistribution):
         mu = self.mu(x)
         scale = self.scale(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, scale), x.ndim - 1)
-        
+
     def extra_repr(self):
         s = 'kwargs={\n'
         for k in ['min_sd', 'max_sd']:
             s += f'  {k}={getattr(self, k)},\n'
         s = s[:-2] + '\n}'
         return s
-    
-    
+
+
 class BetaLayer(LearnableDistribution):
     r"""Layer that parameterizes a number of independent Beta distributions by the alpha and beta vectors.
-    
+
     The distribution is continuous and has support [0, 1].
-    
+
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Beta.
-    
+
     Both the alpha and beta parameter is parameterized by a linear tranformation followed by a Softplus activation and
     potentially clamps the minimum and/or maximum value.
-    
-    Note that the Beta distribution is bimodal if α, β < 1. 
-    
+
+    Note that the Beta distribution is bimodal if α, β < 1.
+
     The mode is
      - \frac{\alpha-1}{\alpha+\beta-2} for α, β >1
      - any value in (0,1) for α, β = 1
@@ -174,16 +177,16 @@ class BetaLayer(LearnableDistribution):
 
 class GaussianFixedVarianceLayer(LearnableDistribution):
     """Layer that parameterizes a Gaussian distribution by its mean and a fixed standard deviation.
-    
+
     The layer outputs a torch.distributions.Independent wrapped torch.distribution.Normal parameterized by the mean and
     standard deviation.
-    
+
     The mean is parameterized by a linear transformation of the input without nonlinearity and has range [-inf, inf].
     The standard deviation is fixed at a constant value of `std` and is not learnable.
     As such, the layer can only model homoscedastic variance.
-    
+
     The log-likelihod of the distributions resulting from this layer correspond to the MSE loss function. 
-    
+
     If the std is set to sqrt(0.5) then the MSE loss is not scaled but is offset by -0.5*log(2π * sqrt(0.5)) = -0.746.
     If the std is set to 1, then the MSE loss is scaled by 0.5 and is offset by -0.5*log(2π) = 0.919.
     From a modelling perspective, setting the standard deviation to the standard deviation of the input space data
@@ -195,7 +198,7 @@ class GaussianFixedVarianceLayer(LearnableDistribution):
         self.in_features = in_features
         self.out_features = out_features
         self.std = std
-        
+
         self.prior = torch.distributions.Independent(
             torch.distributions.Normal(
                 loc=torch.zeros(self.out_features).to(get_device()),
@@ -206,14 +209,14 @@ class GaussianFixedVarianceLayer(LearnableDistribution):
 
         self.mu = nn.Linear(in_features, out_features)
         self.initialize()
-        
+
     def initialize(self):
         nn.init.xavier_normal_(self.mu.weight, gain=1.)  # For mean there is no nonlinearity so take gain to be 1
 
     def forward(self, x):
         mu = self.mu(x)
         return torch.distributions.Independent(torch.distributions.Normal(mu, self.scale), x.ndim - 1)
-    
+
     def extra_repr(self):
         s = 'kwargs={\n'
         for k in ['std']:
@@ -224,7 +227,7 @@ class GaussianFixedVarianceLayer(LearnableDistribution):
 
 class BernoulliLayer(LearnableDistribution):
     """Layer that parameterizes a Bernoulli distribution.
-    
+
     Args:
         in_features (int): Number if input features. If `None`, the inputs to `forward` will be wrapped directly.
         out_features (int): Number if output features.
@@ -239,7 +242,7 @@ class BernoulliLayer(LearnableDistribution):
         else:
             self.p = Identity()
         self.initialize()
-    
+
     def initialize(self):
         if self.in_features is not None:
             gain = nn.init.calculate_gain('sigmoid')  # Bernoulli distribution converts logits to probs with sigmoid
@@ -253,11 +256,11 @@ class BernoulliLayer(LearnableDistribution):
 class ContinuousBernoulliLayer(BernoulliLayer):
     def __init__(self, in_features, out_features):
         super().__init__(in_features=in_features, out_features=out_features)
-        
+
     def forward(self, x):
         p = self.p(x)
         return torch.distributions.Independent(ContinuousBernoulli(logits=p), x.ndim - 1)
-    
+
 
 class GaussianMerge(LearnableDistribution):
     """
