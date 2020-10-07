@@ -21,3 +21,9 @@ class GlobalMaxPool2d(_GlobalMaxPoolNd):
     """Module that applies max pooling globally by have a kernel of the same size as the input"""
     def __init__(self):
         super().__init__(n_dims=2)
+
+
+class GlobalMaxPool3d(_GlobalMaxPoolNd):
+    """Module that applies max pooling globally by have a kernel of the same size as the input"""
+    def __init__(self):
+        super().__init__(n_dims=3)

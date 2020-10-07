@@ -21,7 +21,7 @@ class Flatten(nn.Module):
     def extra_repr(self):
         return f'n_batch_dims={self.n_batch_dims}'
 
-    
+
 class View(nn.Module):
     """Module that returns a view of an input"""
     def __init__(self, n_batch_dims=1, shape=(-1, 1, 1)):

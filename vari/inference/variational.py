@@ -92,6 +92,7 @@ class SVI(nn.Module):
     Stochastic variational inference (SVI).
     """
     base_sampler = ImportanceWeightedSampler(mc=1, iw=1)
+
     def __init__(self, model, likelihood=F.binary_cross_entropy, beta=repeat(1), sampler=base_sampler):
         """
         Initialises a new SVI optimizer for semi-
